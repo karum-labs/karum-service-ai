@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/kaarum/karum-service-ai"
+Repository = "https://github.com/karum-labs/karum-service-ai"
 
 [project.scripts]
 karum-service-ai = "karum_service_ai.main:app"

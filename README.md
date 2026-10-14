@@ -1,15 +1,15 @@
 # karum-service-ai
 
-The **agent & synthesis service** for [Karum](https://github.com/kaarum/karum-infra#readme). This microservice performs live web verification with Google Search grounding and generates the judge-facing sales deliverables. The Go gateway calls it over gRPC.
+The **agent & synthesis service** for [Karum](https://github.com/karum-labs/karum-infra#readme). This microservice performs live web verification with Google Search grounding and generates the judge-facing sales deliverables. The Go gateway calls it over gRPC.
 
 Part of the five-repo Karum layout:
 
 | Repo | Role |
 | --- | --- |
-| [`karum-infra`](https://github.com/kaarum/karum-infra) | Shared protos, Docker Compose, Cloud Run manifests |
-| [`karum-client`](https://github.com/kaarum/karum-client) | Flutter UI (web / desktop) |
-| [`karum-server`](https://github.com/kaarum/karum-server) | Go + Gin API gateway |
-| [`karum-service-taste`](https://github.com/kaarum/karum-service-taste) | Qloo integration, caching, taste scoring |
+| [`karum-infra`](https://github.com/karum-labs/karum-infra) | Shared protos, Docker Compose, Cloud Run manifests |
+| [`karum-client`](https://github.com/karum-labs/karum-client) | Flutter UI (web / desktop) |
+| [`karum-server`](https://github.com/karum-labs/karum-server) | Go + Gin API gateway |
+| [`karum-service-taste`](https://github.com/karum-labs/karum-service-taste) | Qloo integration, caching, taste scoring |
 | **`karum-service-ai`** (this repo) | Vertex AI, search grounding, pitch drafting |
 
 ## What it does
@@ -19,11 +19,11 @@ Part of the five-repo Karum layout:
 - **Buyer persona mapping** — infers the beverage director / GM profile for a style of venue.
 - **Grounded retail check** — demotes online-only brands and attaches the grounding source as evidence.
 
-The gRPC RPCs (`ProbeShortlist`, `LlmOnlyBaseline`, `DraftMemo`, `DraftOutreach`, `DraftListing`, `CheckRetailPresence`) are defined in the shared protos in [`karum-infra`](https://github.com/kaarum/karum-infra). Every response carries `model_id`, `prompt_version`, and cited evidence ids so the gateway can persist provenance without parsing prose.
+The gRPC RPCs (`ProbeShortlist`, `LlmOnlyBaseline`, `DraftMemo`, `DraftOutreach`, `DraftListing`, `CheckRetailPresence`) are defined in the shared protos in [`karum-infra`](https://github.com/karum-labs/karum-infra). Every response carries `model_id`, `prompt_version`, and cited evidence ids so the gateway can persist provenance without parsing prose.
 
 ## Run path
 
-Requires **Python 3.13+** and [`uv`](https://docs.astral.sh/uv/) (see the version pin in [`karum-infra`](https://github.com/kaarum/karum-infra)).
+Requires **Python 3.13+** and [`uv`](https://docs.astral.sh/uv/) (see the version pin in [`karum-infra`](https://github.com/karum-labs/karum-infra)).
 
 ```bash
 # Install dependencies and run the service.
