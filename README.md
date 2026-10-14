@@ -99,6 +99,10 @@ src/karum_service_ai/
 tests/                  pytest suite
 ```
 
+## Ownership
+
+Karum is a two-person build (record: [`DECISIONS.md`](https://github.com/karum-labs/karum-infra/blob/main/DECISIONS.md)). **Side A** owns taste, score, agent, and eval; **side B** owns UI, map, drafts, deploy, and Devpost. This repo is **side A** — the agent loop, probes, autopilot, and draft RPCs. The draft copy judges read is side B's to review, so prompt wording and length caps get a pass from over there.
+
 ## Licence
 
 MIT. See [`LICENSE`](LICENSE).
