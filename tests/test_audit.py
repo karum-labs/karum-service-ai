@@ -50,10 +50,13 @@ TARGETS = [
 ]
 
 
+QLOO_NAMES = {"1F0E9D8C-7B6A-4593-8C2D-1E0F2A3B4C10": ["Del Maguey Single Village Mezcal"]}
+
+
 def test_audit_menu_parses_grounded_results() -> None:
     """The model returns one MenuAuditResult per target with incumbents and sources."""
     client, fake, _ = make_client(AUDIT_JSON)
-    response = audit_menu(client, TARGETS)
+    response = audit_menu(client, TARGETS, qloo_incumbent_names=QLOO_NAMES)
 
     assert len(response.results) == 2
     first, second = response.results
@@ -69,7 +72,7 @@ def test_audit_menu_shelf_unknown_keeps_rank() -> None:
     """An unverifiable venue keeps shelf_unknown=true and shelf_opportunity=0.0 so
     the composite renormalises over affinity and demographics."""
     client, fake, _ = make_client(AUDIT_JSON)
-    response = audit_menu(client, TARGETS)
+    response = audit_menu(client, TARGETS, qloo_incumbent_names=QLOO_NAMES)
 
     second = response.results[1]
     assert second.shelf_unknown is True
@@ -78,9 +81,8 @@ def test_audit_menu_shelf_unknown_keeps_rank() -> None:
     assert second.incumbents == []
 
 
-def test_audit_menu_degraded_on_vertex_failure() -> None:
-    """When Vertex fails the audit returns a degraded response with error_code UPSTREAM
-    and no fabricated menu data."""
+def test_audit_menu_keeps_doors_when_vertex_fails() -> None:
+    """A Vertex failure keeps every Qloo door and labels only the shelf unknown."""
 
     def boom(model: str, contents: str, config: object) -> object:
         raise RuntimeError("Vertex is down")
@@ -89,10 +91,24 @@ def test_audit_menu_degraded_on_vertex_failure() -> None:
     fake.generate_content = boom  # type: ignore[method-assign]
     response = audit_menu(client, TARGETS)
 
-    assert response.results == []
+    assert [result.door.name for result in response.results] == ["Whisler's", "Here Nor There"]
+    assert all(result.shelf_unknown for result in response.results)
+    assert all(result.succeeded is False for result in response.results)
+    assert all(result.shelf_opportunity == 0.0 for result in response.results)
     assert response.error_code == ErrorCode.UPSTREAM
     assert "Vertex is down" in response.error_message
     assert response.attribution.ungrounded is False
+
+
+def test_audit_menu_requests_search_grounding() -> None:
+    """The audit sends the Google Search tool and the configured timeout."""
+    client, fake, _ = make_client(AUDIT_JSON, model_timeout_seconds=12.5)
+    audit_menu(client, TARGETS, qloo_incumbent_names=QLOO_NAMES)
+
+    config = fake.calls[0][2]
+    assert config.tools is not None
+    assert config.tools[0].google_search is not None
+    assert config.http_options.timeout == 12500
 
 
 def test_audit_menu_is_capped_to_shortlist() -> None:
@@ -105,3 +121,40 @@ def test_audit_menu_is_capped_to_shortlist() -> None:
     prompt = fake.calls[0][1]
     assert "Whisler's" in prompt
     assert "Here Nor There" not in prompt
+
+
+def test_audit_menu_rejects_targets_over_the_cap() -> None:
+    """More than the grounding cap is a validation error, not a silent 25-door call."""
+    client, fake, _ = make_client(AUDIT_JSON)
+    response = audit_menu(client, TARGETS * 3)
+
+    assert response.results == []
+    assert response.error_code == ErrorCode.VALIDATION
+    assert "working shortlist cap" in response.error_message
+    assert fake.calls == []
+
+
+def test_audit_menu_drops_unsourced_incumbent() -> None:
+    """A competitor named without a source or Qloo row is dropped, and O_shelf
+    is recomputed from the competitors that remain."""
+    client, fake, _ = make_client(AUDIT_JSON)
+    response = audit_menu(client, TARGETS)
+
+    first = response.results[0]
+    assert first.incumbents == []
+    assert first.competitor_count == 0
+    assert first.shelf_opportunity == 1.0
+
+
+def test_audit_menu_keeps_an_incumbent_the_source_names() -> None:
+    """A competitor carried by a grounding source survives without a Qloo row."""
+    sourced = AUDIT_JSON.replace(
+        "Whisler's \u2014 Menu",
+        "Whisler's menu \u2014 Del Maguey Single Village Mezcal list",
+    )
+    client, fake, _ = make_client(sourced)
+    response = audit_menu(client, TARGETS)
+
+    assert [incumbent.name for incumbent in response.results[0].incumbents] == [
+        "Del Maguey Single Village Mezcal"
+    ]

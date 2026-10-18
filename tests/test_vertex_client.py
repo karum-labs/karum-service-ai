@@ -89,6 +89,34 @@ def test_generate_logs_model_region_and_prompt_version(caplog) -> None:
             assert key not in rec.getMessage().lower()
 
 
+def test_generate_sets_timeout_and_max_output_tokens() -> None:
+    """The request carries the configured timeout (ms) and output cap."""
+    client, fake, _ = make_client('{"id": "x", "value": 1}', model_timeout_seconds=7.5)
+    client.generate("prompt", _Thing, "audit-menu@v1")
+
+    config = fake.calls[0][2]
+    assert config.http_options.timeout == 7500
+    assert config.max_output_tokens == 2048
+
+
+def test_generate_grounded_attaches_the_search_tool() -> None:
+    """Grounding is opt-in and sends the Google Search tool."""
+    client, fake, _ = make_client('{"id": "x", "value": 1}')
+    client.generate("prompt", _Thing, "audit-menu@v1", grounded=True)
+
+    config = fake.calls[0][2]
+    assert config.tools is not None
+    assert config.tools[0].google_search is not None
+
+
+def test_generate_ungrounded_has_no_tools() -> None:
+    """A draft call does not pay for Search grounding."""
+    client, fake, _ = make_client('{"id": "x", "value": 1}')
+    client.generate("prompt", _Thing, "audit-menu@v1")
+
+    assert fake.calls[0][2].tools is None
+
+
 def test_error_code_enum_matches_proto_spelling() -> None:
     """The Pydantic ErrorCode mirrors karum.common.v1.ErrorCode wire spelling."""
     assert ErrorCode.UNSPECIFIED == "ERROR_CODE_UNSPECIFIED"

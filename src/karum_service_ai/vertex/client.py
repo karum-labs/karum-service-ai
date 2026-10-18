@@ -79,6 +79,16 @@ class VertexClient:
         """GCP region, resolved from settings."""
         return self._settings.gcp_location
 
+    @property
+    def timeout_ms(self) -> int:
+        """Per-request timeout in milliseconds (the google-genai unit)."""
+        return int(self._settings.model_timeout_seconds * 1000)
+
+    @property
+    def grounding_shortlist_cap(self) -> int:
+        """Maximum targets the menu audit may send to Search grounding."""
+        return self._settings.grounding_shortlist_cap
+
     def _build_model(self) -> Any:
         client = genai.Client(
             vertexai=True,
@@ -93,21 +103,30 @@ class VertexClient:
         schema: type[T],
         prompt_version: str,
         model_id: str | None = None,
+        *,
+        grounded: bool = False,
     ) -> T:
         """Generate and validate one structured response.
 
         Transport/auth failures raise :class:`VertexError` immediately. Schema
         validation failures are retried once (PLAN.md §15) before raising
         :class:`VertexError`.
+
+        ``grounded`` attaches the Google Search tool. It is set only for the
+        menu audit: the audit is the one RPC that reads a live menu, and the
+        plan caps it to the working shortlist (PLAN.md §16).
         """
         resolved_model = model_id or self.model_id
         logger.info(
-            "vertex.generate model=%s region=%s prompt_version=%s",
+            "vertex.generate model=%s region=%s prompt_version=%s grounded=%s timeout_ms=%d",
             resolved_model,
             self.location,
             prompt_version,
+            grounded,
+            self.timeout_ms,
         )
 
+        tools = [genai_types.Tool(google_search=genai_types.GoogleSearch())] if grounded else None
         last_error: ValidationError | None = None
         for attempt in range(1, self._settings.schema_retry_limit + 2):
             try:
@@ -118,6 +137,8 @@ class VertexClient:
                         response_mime_type="application/json",
                         response_schema=schema,
                         max_output_tokens=self._settings.max_output_tokens,
+                        http_options=genai_types.HttpOptions(timeout=self.timeout_ms),
+                        tools=tools,
                     ),
                 )
             except Exception as exc:  # transport / auth failure; no retry
