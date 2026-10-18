@@ -36,6 +36,7 @@ WORKDIR /app
 # Cloud Run injects the port; default to 8082 to match local Compose.
 ENV AI_PORT=8082
 EXPOSE 8082
+EXPOSE 9092
 
 # Run as a non-root user.
 RUN useradd --create-home --uid 1000 appuser

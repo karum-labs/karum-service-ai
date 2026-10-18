@@ -8,12 +8,24 @@ Cloud Run.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from karum_service_ai import __version__
 from karum_service_ai.api.routes import health
 from karum_service_ai.core.config import get_settings
 from karum_service_ai.core.logging import configure as configure_logging
+from karum_service_ai.grpcserv import serve as serve_grpc
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Start the gRPC server beside HTTP and stop it on shutdown."""
+    grpc_server = serve_grpc(app.state.settings, app.state.settings.grpc_port)
+    yield
+    grpc_server.stop(3)
 
 
 def create_app() -> FastAPI:
@@ -31,6 +43,7 @@ def create_app() -> FastAPI:
         version=__version__,
         docs_url="/docs",
         redoc_url=None,
+        lifespan=_lifespan,
     )
 
     # Expose the resolved settings on the app state so handlers and tests can

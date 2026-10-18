@@ -35,8 +35,10 @@ class Settings(BaseSettings):
     )
 
     # Service identity -----------------------------------------------------
-    #: gRPC port the AI service listens on.
+    #: HTTP port. Compose and Cloud Run probe /health here.
     port: int = 8082
+    #: gRPC port the gateway dials. Health stays on ``port``.
+    grpc_port: int = 9092
     #: Operational mode reported on /health.
     mode: Mode = Mode.FIXTURE
     #: Human-readable service name used in logs and health payloads.
