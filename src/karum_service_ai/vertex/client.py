@@ -90,11 +90,16 @@ class VertexClient:
         return self._settings.grounding_shortlist_cap
 
     def _build_model(self) -> Any:
-        client = genai.Client(
-            vertexai=True,
-            project=self._settings.gcp_project_id or None,
-            location=self._settings.gcp_location,
-        )
+        # A Studio key is not a Cloud project credential. When it is set, the
+        # call does not use Vertex or AI_GCP_PROJECT_ID.
+        if self._settings.gemini_api_key:
+            client = genai.Client(api_key=self._settings.gemini_api_key)
+        else:
+            client = genai.Client(
+                vertexai=True,
+                project=self._settings.gcp_project_id or None,
+                location=self._settings.gcp_location,
+            )
         return client.models
 
     def generate(

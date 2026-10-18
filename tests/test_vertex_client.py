@@ -6,7 +6,8 @@ from __future__ import annotations
 from pydantic import BaseModel
 from tests.conftest import make_client
 
-from karum_service_ai.vertex.client import VertexError
+from karum_service_ai.core.config import Settings
+from karum_service_ai.vertex.client import VertexClient, VertexError
 from karum_service_ai.vertex.models import ErrorCode, ModelAttribution
 
 
@@ -115,6 +116,42 @@ def test_generate_ungrounded_has_no_tools() -> None:
     client.generate("prompt", _Thing, "audit-menu@v1")
 
     assert fake.calls[0][2].tools is None
+
+
+def test_gemini_api_key_builds_a_studio_client(monkeypatch) -> None:
+    """A Studio key is passed as api_key and does not open a Vertex client."""
+    captured: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+            self.models = object()
+
+    monkeypatch.setattr("karum_service_ai.vertex.client.genai.Client", _Client)
+    settings = Settings(gemini_api_key="studio-key", gcp_project_id="karum-512016")
+    VertexClient(settings)
+
+    assert captured == {"api_key": "studio-key"}
+
+
+def test_empty_gemini_key_keeps_the_vertex_client(monkeypatch) -> None:
+    """With no Studio key, calls still go through Vertex on the Cloud project."""
+    captured: dict[str, object] = {}
+
+    class _Client:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+            self.models = object()
+
+    monkeypatch.setattr("karum_service_ai.vertex.client.genai.Client", _Client)
+    settings = Settings(
+        gemini_api_key="", gcp_project_id="karum-512016", gcp_location="us-central1"
+    )
+    VertexClient(settings)
+
+    assert captured["vertexai"] is True
+    assert captured["project"] == "karum-512016"
+    assert captured["location"] == "us-central1"
 
 
 def test_error_code_enum_matches_proto_spelling() -> None:

@@ -58,7 +58,8 @@ Key variables:
 | --- | --- | --- |
 | `AI_PORT` | `8082` | HTTP/gRPC listen port |
 | `AI_MODE` | `fixture` | `live`, `fixture`, or `degraded`; reported on `/health` |
-| `AI_GCP_PROJECT_ID` | _(empty)_ | GCP project id — **never commit** |
+| `GEMINI_API_KEY` | _(empty)_ | Google AI Studio key for Gemini calls — **never commit** |
+| `AI_GCP_PROJECT_ID` | _(empty)_ | Vertex project, used only when `GEMINI_API_KEY` is empty |
 | `AI_GCP_LOCATION` | `us-central1` | GCP region |
 | `AI_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model id |
 | `AI_MAX_OUTPUT_TOKENS` | `2048` | Output cap per draft |
@@ -84,7 +85,7 @@ uv run pytest          # tests
 
 ```bash
 docker build -t karum-service-ai .
-docker run -p 8082:8082 -e AI_GCP_PROJECT_ID=... karum-service-ai
+docker run -p 8082:8082 -e GEMINI_API_KEY=... karum-service-ai
 ```
 
 ## Repository layout

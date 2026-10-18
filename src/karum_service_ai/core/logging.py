@@ -16,6 +16,7 @@ from karum_service_ai.core.config import get_settings
 _REDACTED_KEYS = frozenset(
     {
         "api_key",
+        "gemini_api_key",
         "credentials",
         "service_account",
         "token",

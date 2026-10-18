@@ -42,8 +42,12 @@ class Settings(BaseSettings):
     #: Human-readable service name used in logs and health payloads.
     service_name: str = "service-ai"
 
-    # Vertex AI ------------------------------------------------------------
-    #: GCP project id. Injected via secret manager in production.
+    # Gemini ----------------------------------------------------------------
+    #: Gemini API key from Google AI Studio. When set, model calls use this
+    #: key and do not bill the Cloud project. Never logged.
+    gemini_api_key: str = ""
+    #: GCP project id. Used only when ``gemini_api_key`` is empty, so calls
+    #: go through Vertex on that project.
     gcp_project_id: str = ""
     #: GCP region hosting the Vertex endpoint.
     gcp_location: str = "us-central1"
