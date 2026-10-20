@@ -31,7 +31,7 @@ AUDIT_JSON = """
       "sources": [{"url": "https://www.here-nor-there.com", "title": "Here Nor There"}]
     }
   ],
-  "attribution": {"modelId": "gemini-2.5-flash", "promptVersion": "audit-menu@v1", "evidenceIds": ["ev-1"], "ungrounded": false},
+  "attribution": {"modelId": "gemini-3.8-flash", "promptVersion": "audit-menu@v1", "evidenceIds": ["ev-1"], "ungrounded": false},
   "errorCode": "ERROR_CODE_UNSPECIFIED"
 }
 """
@@ -64,7 +64,7 @@ def test_audit_menu_parses_grounded_results() -> None:
     assert first.incumbents[0].name == "Del Maguey Single Village Mezcal"
     assert first.competitor_count == 1
     assert first.shelf_opportunity == 0.75
-    assert response.attribution.model_id == "gemini-2.5-flash"
+    assert response.attribution.model_id == "gemini-3.8-flash"
     assert response.error_code == ErrorCode.UNSPECIFIED
 
 

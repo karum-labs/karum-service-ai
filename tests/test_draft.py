@@ -67,7 +67,7 @@ PITCH_JSON = """
   "battlecard": {"headline": "Displace without changing the shelf", "incumbentName": "Del Maguey Single Village Mezcal", "talkingPoints": ["Whisler's mezcal shelf is single-brand anchored (ev-0006)"], "compareSummary": "Overlap tags: Bars — shared."},
   "recommendedSku": {"id": "sk-ilegal-espadin-750", "name": "Ilegal Mezcal Espadín Joven 750ml"},
   "modeParagraph": "Pop-up the back bar for Cinco de Mayo.",
-  "attribution": {"modelId": "gemini-2.5-flash", "promptVersion": "draft-door-pitch@v1", "evidenceIds": ["ev-1", "ev-4"], "ungrounded": false},
+  "attribution": {"modelId": "gemini-3.8-flash", "promptVersion": "draft-door-pitch@v1", "evidenceIds": ["ev-1", "ev-4"], "ungrounded": false},
   "errorCode": "ERROR_CODE_UNSPECIFIED"
 }
 """
@@ -76,7 +76,7 @@ BASELINE_JSON = """
 {
   "text": "Wide-band advice: start with well-known agave-friendly cocktail bars downtown.",
   "venueNames": ["La Condesa", "Suerte", "Tommy's Mexican Restaurant"],
-  "attribution": {"modelId": "gemini-2.5-flash", "promptVersion": "llm-only-baseline@v1", "evidenceIds": [], "ungrounded": true},
+  "attribution": {"modelId": "gemini-3.8-flash", "promptVersion": "llm-only-baseline@v1", "evidenceIds": [], "ungrounded": true},
   "errorCode": "ERROR_CODE_UNSPECIFIED"
 }
 """
@@ -166,7 +166,7 @@ def _pitch_json(script: str, mode_paragraph: str = "") -> str:
             },
             "modeParagraph": mode_paragraph,
             "attribution": {
-                "modelId": "gemini-2.5-flash",
+                "modelId": "gemini-3.8-flash",
                 "promptVersion": "draft-door-pitch@v1",
                 "evidenceIds": ["ev-0001"],
                 "ungrounded": False,

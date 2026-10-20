@@ -46,7 +46,7 @@ def test_generate_raises_vertex_error_when_schema_always_invalid() -> None:
         client.generate("prompt", _Thing, "audit-menu@v1")
     except VertexError as exc:
         assert "schema validation" in exc.detail
-        assert exc.model_id == "gemini-2.5-flash"
+        assert exc.model_id == "gemini-3.8-flash"
         assert exc.prompt_version == "audit-menu@v1"
         assert exc.cause is not None
     else:  # pragma: no cover - the try must raise
@@ -81,7 +81,7 @@ def test_generate_logs_model_region_and_prompt_version(caplog) -> None:
         client.generate("prompt", _Thing, "draft-door-pitch@v1")
 
     messages = "\n".join(rec.getMessage() for rec in caplog.records)
-    assert "gemini-2.5-flash" in messages
+    assert "gemini-3.8-flash" in messages
     assert settings.gcp_location in messages
     assert "draft-door-pitch@v1" in messages
     # No credential material is logged.
@@ -159,7 +159,7 @@ def test_error_code_enum_matches_proto_spelling() -> None:
     assert ErrorCode.UNSPECIFIED == "ERROR_CODE_UNSPECIFIED"
     assert ErrorCode.UPSTREAM == "ERROR_CODE_UPSTREAM"
     assert ModelAttribution(
-        model_id="gemini-2.5-flash",
+        model_id="gemini-3.8-flash",
         prompt_version="v1",
         evidence_ids=["ev-1"],
         ungrounded=False,

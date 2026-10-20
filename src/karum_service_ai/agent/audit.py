@@ -196,4 +196,7 @@ def audit_menu(
         )
 
     response.results = _validate_incumbents(response.results, qloo_incumbent_names or {})
+    # The audit's prose cites grounding URLs, not Qloo evidence ids; a model
+    # that returned ids anyway has them cleared (PLAN.md §3).
+    response.attribution.evidence_ids = []
     return response

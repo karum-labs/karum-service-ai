@@ -51,15 +51,18 @@ _DIGIT_RE = re.compile(r"\d")
 
 def enforce_citations(
     text: str,
-    evidence_ids: Sequence[str] = (),
+    evidence_ids: Sequence[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Drop sentences that state a number without a verifiable evidence id.
 
     Returns the kept text and the dropped sentences. When ``evidence_ids`` is
     supplied, a cited id must be one of them; a sentence citing an invented id
-    is dropped too (PLAN.md §17, §18).
+    is dropped too (PLAN.md §17, §18). An empty allow-set is strict: every
+    sentence that states a number is dropped, because the run has no evidence
+    to back one up. ``None`` means no allow-set was supplied, which is the
+    in-process path that has no run evidence to check against.
     """
-    allowed = set(evidence_ids)
+    allowed = None if evidence_ids is None else set(evidence_ids)
     kept: list[str] = []
     dropped: list[str] = []
     for sentence in _SENTENCE_RE.split(text.strip()):
@@ -67,7 +70,7 @@ def enforce_citations(
             continue
         if _DIGIT_RE.search(sentence):
             cited = _EVIDENCE_ID_RE.findall(sentence)
-            if not cited or (allowed and any(cid not in allowed for cid in cited)):
+            if not cited or (allowed is not None and any(cid not in allowed for cid in cited)):
                 dropped.append(sentence)
                 continue
         kept.append(sentence)
@@ -141,13 +144,17 @@ def draft_door_pitch(
     prompt_version: str = DRAFT_PROMPT_VERSION,
     model_id: str | None = None,
     *,
-    evidence_ids: Sequence[str] = (),
+    evidence_ids: Sequence[str] | None = None,
 ) -> DraftDoorPitchResponse:
     """Draft one door's pitch. Returns a degraded response on Vertex failure.
 
     The returned script is filtered through :func:`enforce_citations`, the SKU is
     checked against the brand's own list, the wholesale paragraph is cleared, and
     a battlecard is dropped when the audit found no incumbent (PLAN.md §17).
+
+    ``evidence_ids`` is the run's evidence set, the allow-set a cited id must
+    belong to. ``None`` means the caller has no run evidence to check against;
+    an empty list is strict and drops every sentence that states a number.
     """
     resolved_model = model_id or client.model_id
     prompt = _build_pitch_prompt(brand, door, city, mode, max_words)
@@ -203,7 +210,19 @@ def draft_door_pitch(
         response.mode_paragraph = ""
 
     response.recommended_sku = _sku_from_brand(response.recommended_sku, brand)
+    response.attribution.evidence_ids = _cited_ids(
+        response.script,
+        *(response.battlecard.talking_points if response.battlecard is not None else ()),
+    )
     return response
+
+
+def _cited_ids(*texts: str) -> list[str]:
+    """The evidence ids the kept prose actually cites, in a stable order."""
+    found: set[str] = set()
+    for text in texts:
+        found.update(_EVIDENCE_ID_RE.findall(text))
+    return sorted(found)
 
 
 def _build_baseline_prompt(
@@ -259,6 +278,9 @@ def llm_only_baseline(
             error_message=exc.detail,
         )
     response.attribution.ungrounded = True
+    # The counterfactual cites no Qloo evidence by construction; a model that
+    # returned ids anyway has them cleared (PLAN.md §17).
+    response.attribution.evidence_ids = []
     return response
 
 

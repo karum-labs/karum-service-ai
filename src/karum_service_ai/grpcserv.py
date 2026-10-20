@@ -64,6 +64,21 @@ def _sources(items) -> list:
     return [GroundingSource(url=item.url, title=item.title) for item in items]
 
 
+def _attribution_out(attribution) -> agent_pb2.ModelAttribution:
+    """Map the in-process attribution onto the wire (PLAN.md §3).
+
+    Every AgentService response carries the model id, the prompt version, and
+    the evidence ids the prose cites. A response that omits it is a contract
+    violation, not a default.
+    """
+    return agent_pb2.ModelAttribution(
+        model_id=attribution.model_id,
+        prompt_version=attribution.prompt_version,
+        evidence_ids=list(attribution.evidence_ids),
+        ungrounded=attribution.ungrounded,
+    )
+
+
 def _audit_in(result) -> MenuAuditResult:
     from karum_service_ai.vertex.models import Incumbent
 
@@ -123,6 +138,7 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
 
     def AuditMenu(self, request, context):  # noqa: N802
         targets = []
+        qloo_names: dict[str, list[str]] = {}
         for target in request.targets:
             door = target.door
             targets.append(
@@ -140,9 +156,15 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
                     "skip_candidate": target.skip_candidate,
                 }
             )
-        result = audit_menu(self.client(), targets)
+            # The Qloo payload names the campaign already carries; a competitor
+            # the model names is kept only when a grounding source or one of
+            # these names carries it (PLAN.md §16).
+            if target.qloo_incumbent_names:
+                qloo_names[door.id] = list(target.qloo_incumbent_names)
+        result = audit_menu(self.client(), targets, qloo_incumbent_names=qloo_names)
         return agent_pb2.AuditMenuResponse(
             results=[_audit_out(item) for item in result.results],
+            attribution=_attribution_out(result.attribution),
             error_code=_code(result.error_code),
             error_message=result.error_message,
         )
@@ -171,6 +193,10 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
             request.city,
             mode=_mode(request.mode),
             max_words=request.max_words or 220,
+            # The run's evidence set is the allow-set a cited id must belong to.
+            # An empty set is strict: every sentence that states a number is
+            # dropped (PLAN.md §17, §18).
+            evidence_ids=list(request.evidence_ids),
         )
         card = None
         if result.battlecard is not None:
@@ -187,6 +213,7 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
                 id=result.recommended_sku.id, name=result.recommended_sku.name
             ),
             mode_paragraph=result.mode_paragraph,
+            attribution=_attribution_out(result.attribution),
             error_code=_code(result.error_code),
             error_message=result.error_message,
         )
@@ -206,6 +233,7 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
         return agent_pb2.LlmOnlyBaselineResponse(
             text=result.text,
             venue_names=list(result.venue_names),
+            attribution=_attribution_out(result.attribution),
             error_code=_code(result.error_code),
             error_message=result.error_message,
         )
