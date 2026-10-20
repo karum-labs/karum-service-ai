@@ -44,7 +44,9 @@ def _code(code: ErrorCode) -> int:
 def _entity(ref) -> common_pb2.EntityRef:
     if ref is None:
         return common_pb2.EntityRef()
-    return common_pb2.EntityRef(id=ref.id, type=ref.type, name=ref.name, city=getattr(ref, "city", "") or "")
+    return common_pb2.EntityRef(
+        id=ref.id, type=ref.type, name=ref.name, city=getattr(ref, "city", "") or ""
+    )
 
 
 def _entity_in(ref) -> EntityRef:
@@ -66,10 +68,14 @@ def _audit_in(result) -> MenuAuditResult:
     from karum_service_ai.vertex.models import Incumbent
 
     return MenuAuditResult(
-        door=_entity_in(result.door) if result.HasField("door") else EntityRef(id="", type="", name="", city=""),
+        door=_entity_in(result.door)
+        if result.HasField("door")
+        else EntityRef(id="", type="", name="", city=""),
         succeeded=result.succeeded,
         shelf_unknown=result.shelf_unknown,
-        incumbents=[Incumbent(name=item.name, sources=_sources(item.sources)) for item in result.incumbents],
+        incumbents=[
+            Incumbent(name=item.name, sources=_sources(item.sources)) for item in result.incumbents
+        ],
         competitor_count=result.competitor_count,
         shelf_opportunity=result.shelf_opportunity,
         menu_summary=result.menu_summary,
@@ -87,14 +93,19 @@ def _audit_out(result: MenuAuditResult) -> agent_pb2.MenuAuditResult:
         incumbents=[
             pb.Incumbent(
                 name=item.name,
-                sources=[pb.GroundingSource(url=source.url, title=source.title) for source in item.sources],
+                sources=[
+                    pb.GroundingSource(url=source.url, title=source.title)
+                    for source in item.sources
+                ],
             )
             for item in result.incumbents
         ],
         competitor_count=result.competitor_count,
         shelf_opportunity=result.shelf_opportunity,
         menu_summary=result.menu_summary,
-        sources=[pb.GroundingSource(url=source.url, title=source.title) for source in result.sources],
+        sources=[
+            pb.GroundingSource(url=source.url, title=source.title) for source in result.sources
+        ],
     )
 
 
@@ -116,9 +127,16 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
             door = target.door
             targets.append(
                 {
-                    "door": {"id": door.id, "type": door.type, "name": door.name, "city": door.city},
+                    "door": {
+                        "id": door.id,
+                        "type": door.type,
+                        "name": door.name,
+                        "city": door.city,
+                    },
                     "website": target.website,
-                    "taste_tags": [{"urn": tag.urn, "label": tag.label} for tag in target.taste_tags],
+                    "taste_tags": [
+                        {"urn": tag.urn, "label": tag.label} for tag in target.taste_tags
+                    ],
                     "skip_candidate": target.skip_candidate,
                 }
             )
@@ -165,7 +183,9 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
         return agent_pb2.DraftDoorPitchResponse(
             script=result.script,
             battlecard=card,
-            recommended_sku=agent_pb2.Sku(id=result.recommended_sku.id, name=result.recommended_sku.name),
+            recommended_sku=agent_pb2.Sku(
+                id=result.recommended_sku.id, name=result.recommended_sku.name
+            ),
             mode_paragraph=result.mode_paragraph,
             error_code=_code(result.error_code),
             error_message=result.error_message,

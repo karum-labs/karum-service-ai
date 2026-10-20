@@ -15,6 +15,11 @@ dependencies = [
     "grpcio>=1.84.0",
     "grpcio-tools>=1.84.0",
     "httpx>=0.28.1",
+    # Pinned to the generator in karum-infra/proto/buf.gen.yaml
+    # (protocolbuffers/python:v36.2). The generated modules carry
+    # "Protobuf Python Version: 7.36.2" and validate the runtime on import,
+    # so a runtime older than the gencode fails the service at startup.
+    "protobuf==7.36.2",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.15.0",
     "structlog>=26.1.0",
@@ -77,6 +82,10 @@ indent-style = "space"
 [tool.pytest.ini_options]
 # Discover tests in the tests/ directory.
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "src" puts the service package on the path; "." puts the repo root on it so
+# `from tests.conftest import ...` resolves when pytest is run as a console
+# script (CI runs `uv run pytest`, which does not add the working directory
+# to sys.path the way `python -m pytest` does).
+pythonpath = ["src", "."]
 # Show individual test names for readable CI output.
 addopts = "-v"

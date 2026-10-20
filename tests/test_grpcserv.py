@@ -14,7 +14,9 @@ class _FakeVertex:
         return LlmOnlyBaselineResponse(
             text="ungrounded advice",
             venue_names=["La Condesa"],
-            attribution=ModelAttribution(model_id="fake", prompt_version=prompt_version, ungrounded=True),
+            attribution=ModelAttribution(
+                model_id="fake", prompt_version=prompt_version, ungrounded=True
+            ),
             error_code=ErrorCode.UNSPECIFIED,
         )
 
