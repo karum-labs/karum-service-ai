@@ -1,9 +1,9 @@
 """FastAPI application factory for service-ai.
 
-Creates the ASGI app, wires routes, and configures logging. The gRPC server that
-the gateway dials will be started alongside this app in a later pass; for now the
-HTTP surface exposes ``/health`` so the service is probeable by Compose and
-Cloud Run.
+Creates the ASGI app, wires routes, and configures logging. The gRPC server the
+gateway dials starts beside this app in the lifespan, so the two share one
+process and one settings object; the HTTP surface exposes ``/health`` so the
+service is probeable by Compose and Cloud Run.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Karum service-ai",
-        description="Vertex AI, search grounding, and pitch drafting for the Karum tenant-mix leasing agent.",
+        description="Gemini, search grounding, and pitch drafting for the Karum brand agent.",
         version=__version__,
         docs_url="/docs",
         redoc_url=None,

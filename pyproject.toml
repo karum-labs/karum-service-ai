@@ -1,7 +1,7 @@
 [project]
 name = "karum-service-ai"
 version = "0.1.0"
-description = "Vertex AI, search grounding, and pitch drafting for the Karum tenant-mix leasing agent."
+description = "Gemini, search grounding, and pitch drafting for the Karum brand agent."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [

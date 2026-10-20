@@ -10,16 +10,16 @@ Part of the five-repo Karum layout:
 | [`karum-client`](https://github.com/karum-labs/karum-client) | Flutter UI (web / desktop) |
 | [`karum-server`](https://github.com/karum-labs/karum-server) | Go + Gin API gateway |
 | [`karum-service-taste`](https://github.com/karum-labs/karum-service-taste) | Qloo integration, caching, taste scoring |
-| **`karum-service-ai`** (this repo) | Vertex AI, search grounding, pitch drafting |
+| **`karum-service-ai`** (this repo) | Gemini (AI Studio or Vertex AI), search grounding, pitch drafting |
 
 ## What it does
 
-- **Live menu verification** — calls Gemini 2.5 Flash with Google Search Grounding to check whether target venues already stock a product or its competitors.
+- **Live menu verification** — calls the configured Gemini Flash model with Google Search Grounding to check whether target venues already stock a product or its competitors.
 - **Pitch & battlecard generation** — ingests venue context alongside Qloo's cultural tags to draft customized sales scripts.
 - **Buyer persona mapping** — infers the beverage director / GM profile for a style of venue.
 - **Grounded retail check** — demotes online-only brands and attaches the grounding source as evidence.
 
-The gRPC RPCs (`ProbeShortlist`, `LlmOnlyBaseline`, `DraftMemo`, `DraftOutreach`, `DraftListing`, `CheckRetailPresence`) are defined in the shared protos in [`karum-infra`](https://github.com/karum-labs/karum-infra). Every response carries `model_id`, `prompt_version`, and cited evidence ids so the gateway can persist provenance without parsing prose.
+The gRPC RPCs (`AuditMenu`, `DraftDoorPitch`, `LlmOnlyBaseline`) are defined in the shared protos in [`karum-infra`](https://github.com/karum-labs/karum-infra). Every response carries `model_id`, `prompt_version`, and cited evidence ids so the gateway can persist provenance without parsing prose.
 
 ## Run path
 
@@ -56,22 +56,27 @@ Key variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `AI_PORT` | `8082` | HTTP/gRPC listen port |
+| `AI_PORT` | `8082` | HTTP listen port; `/health` is served here |
+| `AI_GRPC_PORT` | `9092` | gRPC listen port the gateway dials |
 | `AI_MODE` | `fixture` | `live`, `fixture`, or `degraded`; reported on `/health` |
-| `GEMINI_API_KEY` | _(empty)_ | Google AI Studio key for Gemini calls — **never commit** |
-| `AI_GCP_PROJECT_ID` | _(empty)_ | Vertex project, used only when `GEMINI_API_KEY` is empty |
+| `AI_GEMINI_API_KEY` | _(empty)_ | Google AI Studio key for Gemini calls — **never commit** (`GEMINI_API_KEY` still works) |
+| `AI_GCP_PROJECT_ID` | _(empty)_ | Vertex project, used only when `AI_GEMINI_API_KEY` is empty |
 | `AI_GCP_LOCATION` | `us-central1` | GCP region |
-| `AI_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model id |
+| `AI_GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model id |
 | `AI_MAX_OUTPUT_TOKENS` | `2048` | Output cap per draft |
 | `AI_PROBE_BUDGET` | `3` | Bounded follow-up taste probes per run |
+
+Every variable is namespaced with `AI_`. The bare spellings (`PORT`, `MODE`,
+`LOG_LEVEL`) are not read, so a stray variable in the environment cannot change
+how the service behaves.
 
 ### Health
 
 `GET /health` reports the service's operational mode:
 
-- `fixture` — replaying recorded model payloads, no outbound Vertex calls
-- `live` — GCP credentials present
-- `degraded` — Vertex unavailable; the gateway falls back to its deterministic autopilot
+- `fixture` — the service reports fixture mode; the recorded model replay is not implemented yet, so a fixture run still calls the model
+- `live` — a Gemini API key (AI Studio) or Vertex credentials are present
+- `degraded` — the model is unavailable; the gateway falls back to its deterministic autopilot
 
 ### Development
 
@@ -85,7 +90,7 @@ uv run pytest          # tests
 
 ```bash
 docker build -t karum-service-ai .
-docker run -p 8082:8082 -e GEMINI_API_KEY=... karum-service-ai
+docker run -p 8082:8082 -e AI_GEMINI_API_KEY=... karum-service-ai
 ```
 
 ## Repository layout
@@ -93,10 +98,15 @@ docker run -p 8082:8082 -e GEMINI_API_KEY=... karum-service-ai
 ```
 src/karum_service_ai/
   main.py               FastAPI app factory
+  grpcserv.py           AgentService gRPC servicer
   api/routes/health.py  GET /health
+  agent/audit.py        menu audit and shelf scoring
+  agent/draft.py        pitch, battlecard, and LLM-only baseline
+  agent/prompting.py    prompt assembly and inert-name handling
   core/config.py        environment-driven settings
   core/logging.py       structured logging with secret redaction
-  vertex/client.py      Gemini / Vertex client (stub)
+  vertex/client.py      Gemini client (AI Studio or Vertex AI)
+  vertex/models.py      Pydantic response schemas
 tests/                  pytest suite
 ```
 

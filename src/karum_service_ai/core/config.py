@@ -3,6 +3,11 @@
 Every variable read here is documented in the infra repo's ``.env.example``,
 along with the process that reads it. Defaults are chosen so the service boots
 in fixture mode with no ``.env`` file present.
+
+The variables are namespaced with ``AI_``. The bare spellings (``PORT``,
+``MODE``, ``LOG_LEVEL``) are not read: on a cloud host they name something
+else, and a stray ``MODE`` in the environment must not change how this service
+behaves.
 """
 
 from __future__ import annotations
@@ -10,6 +15,7 @@ from __future__ import annotations
 from enum import StrEnum
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,30 +37,41 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        env_prefix="AI_",
         extra="ignore",
     )
 
     # Service identity -----------------------------------------------------
     #: HTTP port. Compose and Cloud Run probe /health here.
     port: int = 8082
+    #: Interface the HTTP server binds. The default serves the container; a
+    #: laptop run can narrow it to the loopback.
+    host: str = "0.0.0.0"
     #: gRPC port the gateway dials. Health stays on ``port``.
     grpc_port: int = 9092
-    #: Operational mode reported on /health.
+    #: Operational mode reported on /health. The AI service has no fixture
+    #: replay, so a run always calls the model; the mode only labels it.
     mode: Mode = Mode.FIXTURE
     #: Human-readable service name used in logs and health payloads.
     service_name: str = "service-ai"
 
     # Gemini ----------------------------------------------------------------
     #: Gemini API key from Google AI Studio. When set, model calls use this
-    #: key and do not bill the Cloud project. Never logged.
-    gemini_api_key: str = ""
+    #: key and do not bill the Cloud project. Never logged. ``GEMINI_API_KEY``
+    #: is still accepted as the legacy spelling.
+    gemini_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("AI_GEMINI_API_KEY", "GEMINI_API_KEY"),
+    )
     #: GCP project id. Used only when ``gemini_api_key`` is empty, so calls
     #: go through Vertex on that project.
     gcp_project_id: str = ""
     #: GCP region hosting the Vertex endpoint.
     gcp_location: str = "us-central1"
-    #: Gemini model id used for grounded checks and drafting.
-    gemini_model: str = "gemini-2.5-flash"
+    #: Gemini model id used for grounded checks and drafting. The default
+    #: follows the provider's current Flash model; ``gemini-2.5-flash`` is
+    #: retired for new API Studio keys and answers 404.
+    gemini_model: str = "gemini-3.8-flash"
     #: Per-request timeout for a single model call, in seconds.
     model_timeout_seconds: float = 30.0
     #: Maximum output tokens allowed for one draft.

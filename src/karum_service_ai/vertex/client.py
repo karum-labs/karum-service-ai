@@ -1,6 +1,6 @@
 """Vertex AI client for service-ai (PLAN.md §15).
 
-Calls Gemini 2.5 Flash through ``google-genai`` on Vertex with **one Pydantic
+Calls the Gemini Flash model through ``google-genai`` with **one Pydantic
 response model per RPC** so invalid JSON fails closed:
 
 - a timeout and a max-output-token cap,
@@ -58,15 +58,17 @@ class VertexError(Exception):
 
 
 class VertexClient:
-    """Typed client for Gemini 2.5 Flash on Vertex AI.
+    """Typed client for the Gemini Flash model.
 
-    ``model`` is the google-genai generative model. In production it is built
-    from application-default credentials; tests inject a fake so no network or
-    GCP credentials are required.
+    The transport is Google AI Studio when ``GEMINI_API_KEY`` is set and
+    Vertex AI on the configured project otherwise. In production the model is
+    built from application-default credentials; tests inject a fake so no
+    network or GCP credentials are required.
     """
 
     def __init__(self, settings: Settings, model: Any | None = None) -> None:
         self._settings = settings
+        self._client: Any | None = None
         self._model = model or self._build_model()
 
     @property
@@ -95,11 +97,21 @@ class VertexClient:
         if self._settings.gemini_api_key:
             client = genai.Client(api_key=self._settings.gemini_api_key)
         else:
+            if not self._settings.gcp_project_id:
+                raise VertexError(
+                    "no model credential: set AI_GEMINI_API_KEY for Gemini AI Studio "
+                    "or AI_GCP_PROJECT_ID for Vertex AI"
+                )
             client = genai.Client(
                 vertexai=True,
-                project=self._settings.gcp_project_id or None,
+                project=self._settings.gcp_project_id,
                 location=self._settings.gcp_location,
             )
+        # Keep the client alive for the lifetime of this object. genai.Client
+        # closes its HTTP client in __del__, so a client that is only reachable
+        # through `client.models` is collected while the service is still
+        # running and every later call fails with "client has been closed".
+        self._client = client
         return client.models
 
     def generate(
