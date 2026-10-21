@@ -76,7 +76,9 @@ class _FakeVertex:
         self._audit_json = audit_json
         self._script = script
 
-    def generate(self, prompt, schema, prompt_version, model_id, grounded=False):
+    def generate(
+        self, prompt, schema, prompt_version, model_id, grounded=False, request_payload=None
+    ):
         if schema is AuditMenuResponse:
             return AuditMenuResponse.model_validate_json(self._audit_json)
         if schema is LlmOnlyBaselineResponse:
@@ -199,7 +201,9 @@ def test_audit_rpc_keeps_a_competitor_the_qloo_payload_names():
     names = [item.name for item in response.results[0].incumbents]
     assert names == ["Aesop"]
     assert response.results[0].competitor_count == 1
-    assert response.attribution.model_id == "gemini-3.8-flash"
+    # The service resolves the provenance, not the model's self-report (K-08):
+    # the audit JSON claims "gemini-3.8-flash", the client is the fake.
+    assert response.attribution.model_id == "fake"
     assert list(response.attribution.evidence_ids) == []
 
 

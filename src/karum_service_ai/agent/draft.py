@@ -30,8 +30,8 @@ from karum_service_ai.vertex.models import (
     DraftDoorPitchResponse,
     ErrorCode,
     LlmOnlyBaselineResponse,
-    ModelAttribution,
     Sku,
+    service_attribution,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,9 @@ BASELINE_PROMPT_VERSION = "llm-only-baseline@v1"
 _CITE_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
 
 #: An evidence id as the draft writes it: ``ev-0001``, with or without braces.
-_EVIDENCE_ID_RE = re.compile(r"\bev-\d{4}\b")
+#: The gateway can issue more than four digits, so the shape is the prefix plus
+#: any id characters, not a fixed width.
+_EVIDENCE_ID_RE = re.compile(r"\bev-[A-Za-z0-9_-]+\b")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DIGIT_RE = re.compile(r"\d")
 
@@ -119,7 +121,11 @@ def _build_pitch_prompt(
         f"The door's shared taste tags: {as_data(tags)}. "
         f"The door's affinity percentile: {door.affinity.value:.2f} (raw {door.affinity.raw_value:.2f}). "
         f"Compare tags: {as_data(compare)}. Incumbent on the shelf: {as_data(incumbent)}. "
-        f"Menu summary: {as_data(audit.menu_summary)}. Brand SKUs: {as_data(skus)}. "
+        # The audit's menu summary is live web content. It is deliberately not
+        # relayed into this prompt: the draft already receives the structured
+        # incumbent and competitor findings, and excluding the free-text
+        # summary closes the prompt-injection relay (PLAN.md §17, §18).
+        f"Brand SKUs: {as_data(skus)}. "
         f"Rules: {DATA_RULE} "
         "Every number in the script cites an evidence id, e.g. "
         "'ranks first of 25 (ev-0001)'. Do not invent evidence ids. "
@@ -159,7 +165,20 @@ def draft_door_pitch(
     resolved_model = model_id or client.model_id
     prompt = _build_pitch_prompt(brand, door, city, mode, max_words)
     try:
-        response = client.generate(prompt, DraftDoorPitchResponse, prompt_version, resolved_model)
+        response = client.generate(
+            prompt,
+            DraftDoorPitchResponse,
+            prompt_version,
+            resolved_model,
+            # The request's own data identifies the recording in fixture mode;
+            # the shape matches what a recording's ``match`` spec names.
+            request_payload={
+                "brand": {"name": brand.name},
+                "city": city,
+                "mode": mode,
+                "door": {"audit": {"door": {"name": door.audit.door.name}}},
+            },
+        )
     except VertexError as exc:
         logger.warning(
             "draft_door_pitch.vertex_failed model=%s door=%s detail=%s",
@@ -172,7 +191,7 @@ def draft_door_pitch(
             battlecard=None,
             recommended_sku=Sku(id="", name=""),
             mode_paragraph="",
-            attribution=ModelAttribution(
+            attribution=service_attribution(
                 model_id=resolved_model,
                 prompt_version=prompt_version,
                 evidence_ids=[],
@@ -197,6 +216,16 @@ def draft_door_pitch(
             )
 
     if response.battlecard is not None:
+        # The headline and the compare summary are numeric-bearing prose too,
+        # so they go through the same allow-set as the script (PLAN.md §17).
+        headline, _ = enforce_citations(response.battlecard.headline, evidence_ids)
+        fallback_headline = f"Displace {response.battlecard.incumbent_name}".strip()
+        response.battlecard.headline = headline or fallback_headline
+        if response.battlecard.compare_summary:
+            compare_summary, _ = enforce_citations(
+                response.battlecard.compare_summary, evidence_ids
+            )
+            response.battlecard.compare_summary = compare_summary
         points = [
             kept
             for point in response.battlecard.talking_points
@@ -208,11 +237,21 @@ def draft_door_pitch(
 
     if mode == "wholesale":
         response.mode_paragraph = ""
+    else:
+        paragraph, _ = enforce_citations(response.mode_paragraph, evidence_ids)
+        response.mode_paragraph = paragraph
 
     response.recommended_sku = _sku_from_brand(response.recommended_sku, brand)
-    response.attribution.evidence_ids = _cited_ids(
-        response.script,
-        *(response.battlecard.talking_points if response.battlecard is not None else ()),
+    # Provenance is the service's, not the model's. Overwrite whatever the
+    # model wrote, including a forged model id or prompt version (PLAN.md §3).
+    response.attribution = service_attribution(
+        model_id=resolved_model,
+        prompt_version=prompt_version,
+        evidence_ids=_cited_ids(
+            response.script,
+            *(response.battlecard.talking_points if response.battlecard is not None else ()),
+        ),
+        ungrounded=False,
     )
     return response
 
@@ -258,7 +297,13 @@ def llm_only_baseline(
     resolved_model = model_id or client.model_id
     prompt = _build_baseline_prompt(brand, city, mode, max_words)
     try:
-        response = client.generate(prompt, LlmOnlyBaselineResponse, prompt_version, resolved_model)
+        response = client.generate(
+            prompt,
+            LlmOnlyBaselineResponse,
+            prompt_version,
+            resolved_model,
+            request_payload={"brand": {"name": brand.name}, "city": city, "mode": mode},
+        )
     except VertexError as exc:
         logger.warning(
             "llm_only_baseline.vertex_failed model=%s detail=%s",
@@ -268,7 +313,7 @@ def llm_only_baseline(
         return LlmOnlyBaselineResponse(
             text="",
             venue_names=[],
-            attribution=ModelAttribution(
+            attribution=service_attribution(
                 model_id=resolved_model,
                 prompt_version=prompt_version,
                 evidence_ids=[],
@@ -277,10 +322,18 @@ def llm_only_baseline(
             error_code=ErrorCode.UPSTREAM,
             error_message=exc.detail,
         )
-    response.attribution.ungrounded = True
-    # The counterfactual cites no Qloo evidence by construction; a model that
-    # returned ids anyway has them cleared (PLAN.md §17).
-    response.attribution.evidence_ids = []
+    # The counterfactual has no Qloo evidence to cite, so a numeric claim in it
+    # cannot pass the filter: keep the unquantified advice and drop the rest
+    # (PLAN.md §17). The panel stays labeled ungrounded either way.
+    text, _ = enforce_citations(response.text, ())
+    response.text = text
+    # The provenance is the service's, never the model's self-report (PLAN.md §3).
+    response.attribution = service_attribution(
+        model_id=resolved_model,
+        prompt_version=prompt_version,
+        evidence_ids=[],
+        ungrounded=True,
+    )
     return response
 
 

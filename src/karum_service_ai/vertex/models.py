@@ -9,6 +9,7 @@ compatible with the contract test fixtures in
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,6 +42,28 @@ class ModelAttribution(_Base):
     prompt_version: str
     evidence_ids: list[str] = Field(default_factory=list)
     ungrounded: bool = False
+
+
+def service_attribution(
+    model_id: str,
+    prompt_version: str,
+    *,
+    evidence_ids: Sequence[str] = (),
+    ungrounded: bool = False,
+) -> ModelAttribution:
+    """The provenance the service knows, never the model's self-report.
+
+    The model writes its own ``attribution`` block, and a model that invents a
+    model id or a prompt version must never reach the gateway: the service
+    resolves the model name from its own configuration and the prompt version
+    from its own constants, and says so on every path (PLAN.md §3).
+    """
+    return ModelAttribution(
+        model_id=model_id,
+        prompt_version=prompt_version,
+        evidence_ids=list(evidence_ids),
+        ungrounded=ungrounded,
+    )
 
 
 class EntityRef(_Base):

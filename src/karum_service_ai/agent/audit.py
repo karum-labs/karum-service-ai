@@ -27,7 +27,7 @@ from karum_service_ai.vertex.models import (
     EntityRef,
     ErrorCode,
     MenuAuditResult,
-    ModelAttribution,
+    service_attribution,
 )
 
 logger = logging.getLogger(__name__)
@@ -110,14 +110,30 @@ def _incumbent_is_sourced(
 def _validate_incumbents(
     results: Sequence[MenuAuditResult],
     qloo_incumbent_names: Mapping[str, Sequence[str]],
+    targets: Sequence[Mapping[str, Any]] = (),
 ) -> list[MenuAuditResult]:
-    """Drop competitors the audit cannot source, and keep O_shelf consistent."""
+    """Drop competitors the audit cannot source, and keep O_shelf consistent.
+
+    The Qloo payload is keyed by the request's door id, so a model that mangles
+    the door id it echoes back must not lose a sourced incumbent: the request's
+    own target wins, and the result's door id is corrected to it (PLAN.md §16).
+    """
     kept_results: list[MenuAuditResult] = []
-    for result in results:
+    for position, result in enumerate(results):
+        target = targets[position] if position < len(targets) else {}
+        door = target.get("door", {}) or {}
+        door_id = str(door.get("id", "")) or result.door.id
+        if door_id != result.door.id:
+            logger.warning(
+                "audit_menu.door_id_mismatch model=%s request=%s",
+                result.door.id,
+                door_id,
+            )
+            result.door.id = door_id
         kept = [
             incumbent
             for index, incumbent in enumerate(result.incumbents)
-            if _incumbent_is_sourced(result, index, qloo_incumbent_names.get(result.door.id, ()))
+            if _incumbent_is_sourced(result, index, qloo_incumbent_names.get(door_id, ()))
         ]
         if len(kept) != len(result.incumbents):
             logger.warning(
@@ -152,7 +168,7 @@ def audit_menu(
     board (PLAN.md §16).
     """
     resolved_model = model_id or client.model_id
-    attribution = ModelAttribution(
+    attribution = service_attribution(
         model_id=resolved_model,
         prompt_version=prompt_version,
         evidence_ids=[],
@@ -180,6 +196,7 @@ def audit_menu(
             prompt_version,
             resolved_model,
             grounded=True,
+            request_payload={"targets": targets},
         )
     except VertexError as exc:
         logger.warning(
@@ -195,8 +212,15 @@ def audit_menu(
             error_message=exc.detail,
         )
 
-    response.results = _validate_incumbents(response.results, qloo_incumbent_names or {})
-    # The audit's prose cites grounding URLs, not Qloo evidence ids; a model
-    # that returned ids anyway has them cleared (PLAN.md §3).
-    response.attribution.evidence_ids = []
+    response.results = _validate_incumbents(response.results, qloo_incumbent_names or {}, targets)
+    # The provenance is the service's, not the model's: the model id, the
+    # prompt version, and the grounded flag are resolved here (PLAN.md §3).
+    # The audit's prose cites grounding URLs, not Qloo evidence ids, so the
+    # cited ids stay empty.
+    response.attribution = service_attribution(
+        model_id=resolved_model,
+        prompt_version=prompt_version,
+        evidence_ids=[],
+        ungrounded=False,
+    )
     return response

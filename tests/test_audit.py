@@ -50,7 +50,9 @@ TARGETS = [
 ]
 
 
-QLOO_NAMES = {"1F0E9D8C-7B6A-4593-8C2D-1E0F2A3B4C10": ["Del Maguey Single Village Mezcal"]}
+#: Keyed by the request's door id, as the gateway's payload is — the model's
+#: echoed id is corrected to it and never trusted for the lookup.
+QLOO_NAMES = {"1": ["Del Maguey Single Village Mezcal"]}
 
 
 def test_audit_menu_parses_grounded_results() -> None:

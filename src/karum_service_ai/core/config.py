@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,11 +50,19 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     #: gRPC port the gateway dials. Health stays on ``port``.
     grpc_port: int = 9092
-    #: Operational mode reported on /health. The AI service has no fixture
-    #: replay, so a run always calls the model; the mode only labels it.
+    #: Operational mode reported on /health. ``fixture`` replays the recorded
+    #: model outputs under ``AI_FIXTURES_DIR`` — no network, no credential;
+    #: ``live`` calls the model; ``degraded`` calls the model and labels the
+    #: service as degraded.
     mode: Mode = Mode.FIXTURE
     #: Human-readable service name used in logs and health payloads.
     service_name: str = "service-ai"
+
+    # Recorded pack ---------------------------------------------------------
+    #: Directory holding the recorded model outputs replayed in fixture mode.
+    #: Relative paths resolve against this repository's root; the pack ships
+    #: in karum-infra under ``fixtures/ai`` (mirrors ``TASTE_FIXTURES_DIR``).
+    ai_fixtures_dir: Path = Path("../karum-infra/fixtures/ai")
 
     # Gemini ----------------------------------------------------------------
     #: Gemini API key from Google AI Studio. When set, model calls use this

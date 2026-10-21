@@ -59,6 +59,7 @@ Key variables:
 | `AI_PORT` | `8082` | HTTP listen port; `/health` is served here |
 | `AI_GRPC_PORT` | `9092` | gRPC listen port the gateway dials |
 | `AI_MODE` | `fixture` | `live`, `fixture`, or `degraded`; reported on `/health` |
+| `AI_FIXTURES_DIR` | `../karum-infra/fixtures/ai` | Recorded pack replayed in fixture mode; relative paths resolve against this repo's root |
 | `AI_GEMINI_API_KEY` | _(empty)_ | Google AI Studio key for Gemini calls — **never commit** (`GEMINI_API_KEY` still works) |
 | `AI_GCP_PROJECT_ID` | _(empty)_ | Vertex project, used only when `AI_GEMINI_API_KEY` is empty |
 | `AI_GCP_LOCATION` | `us-central1` | GCP region |
@@ -74,9 +75,15 @@ how the service behaves.
 
 `GET /health` reports the service's operational mode:
 
-- `fixture` — the service reports fixture mode; the recorded model replay is not implemented yet, so a fixture run still calls the model
-- `live` — a Gemini API key (AI Studio) or Vertex credentials are present
-- `degraded` — the model is unavailable; the gateway falls back to its deterministic autopilot
+- `fixture` — model calls replay the recorded pack under `AI_FIXTURES_DIR` (the pack ships in `karum-infra`); no network call and no credential is used, and a request with no recording fails as a typed upstream error rather than a guess
+- `live` — a Gemini API key (AI Studio) or Vertex credentials are present and calls go to the model
+- `degraded` — calls go to the model, and the service labels itself degraded for the client banner
+
+The `status` field is an honest read of the configured mode, not a constant: it
+is `degraded` when fixture mode has no recorded pack or when a live service has
+neither a Studio key nor a project credential, and `ok` otherwise. The HTTP
+status stays 200 in both cases, so a liveness probe does not fail over a
+configuration gap that a per-request error would explain.
 
 ### Development
 

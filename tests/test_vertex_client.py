@@ -3,10 +3,11 @@ one retry on invalid JSON, typed error, and credentials kept out of logs."""
 
 from __future__ import annotations
 
+from google.genai import errors as genai_errors
 from pydantic import BaseModel
 from tests.conftest import make_client
 
-from karum_service_ai.core.config import Settings
+from karum_service_ai.core.config import Mode, Settings
 from karum_service_ai.vertex.client import VertexClient, VertexError
 from karum_service_ai.vertex.models import ErrorCode, ModelAttribution
 
@@ -74,6 +75,34 @@ def test_generate_raises_vertex_error_on_transport_failure_without_retry() -> No
         raise AssertionError("expected VertexError")
 
 
+def test_generate_sanitizes_api_error_detail(caplog) -> None:
+    """An API error's raw body stays in the log, never in the client detail (S-11)."""
+    raw = "quota internals and a request echo: door=Whisler's"
+    error = genai_errors.ClientError(
+        code=402,
+        response_json={"error": {"message": raw, "status": "RESOURCE_EXHAUSTED"}},
+    )
+
+    def boom(model: str, contents: str, config: object) -> object:
+        raise error
+
+    client, fake, _ = make_client("{}")
+    fake.generate_content = boom  # type: ignore[method-assign]
+    with caplog.at_level("WARNING"):
+        try:
+            client.generate("prompt", _Thing, "audit-menu@v1")
+        except VertexError as exc:
+            assert exc.detail == "Vertex call failed (ClientError, HTTP 402)"
+            assert raw not in exc.detail
+            assert exc.cause is error
+        else:  # pragma: no cover - the try must raise
+            raise AssertionError("expected VertexError")
+
+    # The full upstream detail stays in the server log, where it belongs.
+    messages = "\n".join(rec.getMessage() for rec in caplog.records)
+    assert raw in messages
+
+
 def test_generate_logs_model_region_and_prompt_version(caplog) -> None:
     """Logs include model, region, and prompt version (never credentials)."""
     client, fake, settings = make_client('{"id": "x", "value": 1}')
@@ -128,7 +157,7 @@ def test_gemini_api_key_builds_a_studio_client(monkeypatch) -> None:
             self.models = object()
 
     monkeypatch.setattr("karum_service_ai.vertex.client.genai.Client", _Client)
-    settings = Settings(gemini_api_key="studio-key", gcp_project_id="karum-512016")
+    settings = Settings(mode=Mode.LIVE, gemini_api_key="studio-key", gcp_project_id="karum-512016")
     VertexClient(settings)
 
     assert captured == {"api_key": "studio-key"}
@@ -145,13 +174,59 @@ def test_empty_gemini_key_keeps_the_vertex_client(monkeypatch) -> None:
 
     monkeypatch.setattr("karum_service_ai.vertex.client.genai.Client", _Client)
     settings = Settings(
-        gemini_api_key="", gcp_project_id="karum-512016", gcp_location="us-central1"
+        mode=Mode.LIVE,
+        gemini_api_key="",
+        gcp_project_id="karum-512016",
+        gcp_location="us-central1",
     )
     VertexClient(settings)
 
     assert captured["vertexai"] is True
     assert captured["project"] == "karum-512016"
     assert captured["location"] == "us-central1"
+
+
+def test_fixture_mode_builds_no_live_client(monkeypatch, tmp_path) -> None:
+    """Fixture mode replays; it never touches a credential (PLAN.md §4)."""
+
+    def _boom(**kwargs: object) -> object:  # pragma: no cover - must not run
+        raise AssertionError("fixture mode must not build a genai client")
+
+    monkeypatch.setattr("karum_service_ai.vertex.client.genai.Client", _boom)
+    settings = Settings(
+        mode=Mode.FIXTURE,
+        gemini_api_key="studio-key",
+        ai_fixtures_dir=tmp_path / "no-pack",
+    )
+    client = VertexClient(settings)
+
+    assert client.transport_name == "fixture"
+
+
+def test_missing_fixture_pack_is_a_typed_error() -> None:
+    """An absent pack surfaces as VertexError on generate, not an escaping one."""
+    settings = Settings(mode=Mode.FIXTURE, ai_fixtures_dir="tests/no-such-pack")
+    client = VertexClient(settings)
+
+    try:
+        client.generate("prompt", _Thing, "audit-menu@v1")
+    except VertexError as exc:
+        assert "fixture pack not found" in exc.detail
+    else:  # pragma: no cover - the try must raise
+        raise AssertionError("expected VertexError")
+
+
+def test_missing_credential_is_a_typed_error() -> None:
+    """With neither key nor project, generate raises VertexError, not UNKNOWN."""
+    settings = Settings(mode=Mode.LIVE, gemini_api_key="", gcp_project_id="")
+    client = VertexClient(settings)  # construction must not raise
+
+    try:
+        client.generate("prompt", _Thing, "audit-menu@v1")
+    except VertexError as exc:
+        assert "no model credential" in exc.detail
+    else:  # pragma: no cover - the try must raise
+        raise AssertionError("expected VertexError")
 
 
 def test_error_code_enum_matches_proto_spelling() -> None:

@@ -9,23 +9,34 @@ response model per RPC** so invalid JSON fails closed:
 - raises a typed :class:`VertexError` the gateway maps onto ``degraded``
   (PLAN.md §18).
 
+In ``fixture`` mode the client replays the recorded pack instead of calling
+the model: no network, no credential, and the same typed failures when a
+recording is missing (PLAN.md §4).
+
 Replay tests inject a fake model that returns the fixture schemas.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from pydantic import BaseModel, ValidationError
 
-from karum_service_ai.core.config import Settings
+from karum_service_ai.core.config import Mode, Settings
+from karum_service_ai.vertex.errors import VertexError
+from karum_service_ai.vertex.fixtures import FixturePack, resolve_fixtures_dir
+from karum_service_ai.vertex.transport import RecordedModelTransport
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+__all__ = ["VertexClient", "VertexError"]
 
 #: The prompt is sent to the model as delimited data; venue and brand names are
 #: interpolated into the prompt body, never into the schema, so an
@@ -36,25 +47,22 @@ T = TypeVar("T", bound=BaseModel)
 #: credentials, or an API key.
 
 
-class VertexError(Exception):
-    """Typed failure from the Vertex client.
+def _failure_detail(exc: Exception) -> str:
+    """A client-safe summary of a failed model call (S-11, PLAN.md §18).
 
-    The gateway maps this onto the degraded run state (PLAN.md §18).
+    A ``google-genai`` API error renders as the provider's raw response body
+    — quota internals, request echoes — and that text used to ride the typed
+    error into ``error_message`` and on to the client UI. Only the error class
+    and HTTP status are needed there; the raw detail is logged server-side and
+    stays on the ``cause`` chain.
     """
-
-    def __init__(
-        self,
-        detail: str,
-        *,
-        model_id: str | None = None,
-        prompt_version: str | None = None,
-        cause: Exception | None = None,
-    ) -> None:
-        self.detail = detail
-        self.model_id = model_id
-        self.prompt_version = prompt_version
-        self.cause = cause
-        super().__init__(detail)
+    if isinstance(exc, genai_errors.APIError):
+        code = getattr(exc, "code", None)
+        label = type(exc).__name__
+        if isinstance(code, int):
+            return f"Vertex call failed ({label}, HTTP {code})"
+        return f"Vertex call failed ({label})"
+    return f"Vertex call failed: {exc}"
 
 
 class VertexClient:
@@ -64,12 +72,45 @@ class VertexClient:
     Vertex AI on the configured project otherwise. In production the model is
     built from application-default credentials; tests inject a fake so no
     network or GCP credentials are required.
+
+    In ``fixture`` mode the client replays the recorded pack instead of
+    building a model, so no credential is required and no call leaves the
+    process (PLAN.md §4).
     """
 
     def __init__(self, settings: Settings, model: Any | None = None) -> None:
         self._settings = settings
         self._client: Any | None = None
-        self._model = model or self._build_model()
+        self._model: Any | None = model
+        self._transport: RecordedModelTransport | None = None
+        # A failed build is kept, not raised: the model client and the fixture
+        # pack are resolved here, but a missing credential or pack must not
+        # escape the servicer as a gRPC UNKNOWN. generate() re-raises the typed
+        # VertexError, which the agent functions catch and map onto
+        # ERROR_CODE_UPSTREAM (PLAN.md §15, §18, §4).
+        self._build_error: VertexError | None = None
+        if self._model is None:
+            try:
+                self._resolve_transport()
+            except VertexError as exc:
+                logger.warning("vertex.transport_unavailable detail=%s", exc.detail)
+                self._build_error = exc
+
+    def _resolve_transport(self) -> None:
+        """Build the fixture pack or the live model exactly once."""
+        if self._settings.mode == Mode.FIXTURE:
+            self._transport = RecordedModelTransport(
+                FixturePack(resolve_fixtures_dir(self._settings.ai_fixtures_dir))
+            )
+        else:
+            self._model = self._build_model()
+
+    @property
+    def transport_name(self) -> str:
+        """The transport this client speaks through: ``fixture`` or ``live``."""
+        if self._model is None and self._settings.mode == Mode.FIXTURE:
+            return "fixture"
+        return "live"
 
     @property
     def model_id(self) -> str:
@@ -122,6 +163,7 @@ class VertexClient:
         model_id: str | None = None,
         *,
         grounded: bool = False,
+        request_payload: Mapping[str, Any] | None = None,
     ) -> T:
         """Generate and validate one structured response.
 
@@ -132,6 +174,10 @@ class VertexClient:
         ``grounded`` attaches the Google Search tool. It is set only for the
         menu audit: the audit is the one RPC that reads a live menu, and the
         plan caps it to the working shortlist (PLAN.md §16).
+
+        ``request_payload`` is the request's own data, not the prompt. In
+        fixture mode it is what identifies the recording to replay; the live
+        path ignores it.
         """
         resolved_model = model_id or self.model_id
         logger.info(
@@ -142,6 +188,12 @@ class VertexClient:
             grounded,
             self.timeout_ms,
         )
+
+        if self._build_error is not None:
+            raise self._build_error
+
+        if self._transport is not None:
+            return self._transport.generate(schema, request_payload)
 
         tools = [genai_types.Tool(google_search=genai_types.GoogleSearch())] if grounded else None
         last_error: ValidationError | None = None
@@ -159,8 +211,17 @@ class VertexClient:
                     ),
                 )
             except Exception as exc:  # transport / auth failure; no retry
+                # The raw exception (for an APIError, the upstream response
+                # body) is logged here and preserved on the cause chain; the
+                # typed detail the agents forward is sanitized (S-11).
+                logger.warning(
+                    "vertex.generate.transport_failed model=%s prompt_version=%s error=%s",
+                    resolved_model,
+                    prompt_version,
+                    exc,
+                )
                 raise VertexError(
-                    f"Vertex call failed: {exc}",
+                    _failure_detail(exc),
                     model_id=resolved_model,
                     prompt_version=prompt_version,
                     cause=exc,
