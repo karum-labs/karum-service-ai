@@ -22,7 +22,7 @@ import logging
 import re
 from collections.abc import Sequence
 
-from karum_service_ai.agent.prompting import DATA_RULE, as_data
+from karum_service_ai.agent.prompting import DATA_RULE, as_data, safe_text
 from karum_service_ai.vertex.client import VertexClient, VertexError
 from karum_service_ai.vertex.models import (
     BrandContext,
@@ -49,6 +49,32 @@ _CITE_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
 _EVIDENCE_ID_RE = re.compile(r"\bev-[A-Za-z0-9_-]+\b")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DIGIT_RE = re.compile(r"\d")
+
+#: A word for the cap count: any run of word characters.
+_WORD_RE = re.compile(r"\w+")
+
+
+def _word_count(text: str) -> int:
+    return len(_WORD_RE.findall(text))
+
+
+def _enforce_cap(text: str, max_words: int) -> str:
+    """Drop trailing sentences until the text fits the word cap.
+
+    Sentences stay whole: a sentence whose words alone push the text past the
+    cap is kept when nothing has been kept yet, otherwise it is dropped and the
+    remaining text is under the cap. Returns the kept text.
+    """
+    if max_words <= 0:
+        return text
+    sentences = [part for part in _SENTENCE_RE.split(text.strip()) if part]
+    kept: list[str] = []
+    for sentence in sentences:
+        candidate = " ".join(kept + [sentence])
+        if _word_count(candidate) > max_words and kept:
+            break
+        kept.append(sentence)
+    return " ".join(kept)
 
 
 def enforce_citations(
@@ -95,9 +121,9 @@ def _sku_from_brand(sku: Sku, brand: BrandContext) -> Sku:
             return candidate
     logger.warning(
         "draft_door_pitch.sku_outside_brand_list model_sku=%r brand=%s fallback=%r",
-        sku.id or sku.name,
-        brand.name,
-        brand.skus[0].id,
+        safe_text(sku.id or sku.name),
+        safe_text(brand.name),
+        safe_text(brand.skus[0].id),
     )
     return brand.skus[0]
 
@@ -183,7 +209,7 @@ def draft_door_pitch(
         logger.warning(
             "draft_door_pitch.vertex_failed model=%s door=%s detail=%s",
             resolved_model,
-            door.audit.door.name,
+            safe_text(door.audit.door.name),
             exc.detail,
         )
         return DraftDoorPitchResponse(
@@ -201,19 +227,29 @@ def draft_door_pitch(
             error_message=exc.detail,
         )
 
-    script, dropped = enforce_citations(response.script, evidence_ids)
+    script = _enforce_cap(response.script, max_words)
+    before_words = _word_count(response.script)
+    script, dropped = enforce_citations(script, evidence_ids)
+    response.script = script
     if dropped:
         logger.warning(
             "draft_door_pitch.uncited_sentences door=%s dropped=%d",
-            door.audit.door.name,
+            safe_text(door.audit.door.name),
             len(dropped),
         )
-        response.script = script
         if not script:
             response.error_code = ErrorCode.VALIDATION
             response.error_message = (
                 "every sentence was dropped: a number carried no verifiable evidence id"
             )
+    if _word_count(response.script) < before_words:
+        logger.warning(
+            "draft_door_pitch.word_cap door=%s cap=%d before=%d after=%d",
+            door.audit.door.name,
+            max_words,
+            before_words,
+            _word_count(response.script),
+        )
 
     if response.battlecard is not None:
         # The headline and the compare summary are numeric-bearing prose too,
@@ -325,8 +361,18 @@ def llm_only_baseline(
     # The counterfactual has no Qloo evidence to cite, so a numeric claim in it
     # cannot pass the filter: keep the unquantified advice and drop the rest
     # (PLAN.md §17). The panel stays labeled ungrounded either way.
-    text, _ = enforce_citations(response.text, ())
+    before_words = _word_count(response.text)
+    text = _enforce_cap(response.text, max_words)
+    text, _ = enforce_citations(text, ())
     response.text = text
+    if _word_count(text) < before_words:
+        logger.warning(
+            "llm_only_baseline.word_cap city=%s cap=%d before=%d after=%d",
+            city,
+            max_words,
+            before_words,
+            _word_count(text),
+        )
     # The provenance is the service's, never the model's self-report (PLAN.md §3).
     response.attribution = service_attribution(
         model_id=resolved_model,

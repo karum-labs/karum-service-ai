@@ -3,9 +3,15 @@ mode-specific paragraph, and the LLM-only baseline."""
 
 from __future__ import annotations
 
+import json
+
 from tests.conftest import make_client
 
-from karum_service_ai.agent.draft import draft_door_pitch, llm_only_baseline
+from karum_service_ai.agent.draft import (
+    _word_count,
+    draft_door_pitch,
+    llm_only_baseline,
+)
 from karum_service_ai.vertex.models import (
     Battlecard,
     BrandContext,
@@ -208,6 +214,41 @@ def test_draft_accepts_a_cited_sentence_with_a_known_id() -> None:
 
     assert "25" in response.script
     assert response.error_code is ErrorCode.UNSPECIFIED
+
+
+def test_draft_enforces_the_word_cap() -> None:
+    """Trailing sentences are dropped until the script fits the 220-word cap."""
+    tail = "The street outside is bright and full of people. "
+    script = "Whisler's ranks first of 25 (ev-0001). " + tail * 25
+    client, _, _ = make_client(_pitch_json(script))
+    response = draft_door_pitch(client, BRAND, DOOR_WITHOUT_INCUMBENT, "Austin")
+
+    assert _word_count(response.script) <= 220
+    assert "25" in response.script
+
+
+def test_baseline_enforces_the_word_cap() -> None:
+    """The counterfactual text trims to fit the 160-word cap."""
+    tail = "Well-known cocktail bars downtown welcome new guests. "
+    text = tail * 20
+    client, _, _ = make_client(
+        json.dumps(
+            {
+                "text": text,
+                "venueNames": ["La Condesa"],
+                "attribution": {
+                    "modelId": "m",
+                    "promptVersion": "v",
+                    "evidenceIds": [],
+                    "ungrounded": True,
+                },
+                "errorCode": "ERROR_CODE_UNSPECIFIED",
+            }
+        )
+    )
+    response = llm_only_baseline(client, BRAND, "Austin", mode="wholesale")
+
+    assert _word_count(response.text) <= 160
 
 
 def test_draft_clears_a_wholesale_paragraph_written_by_the_model() -> None:
