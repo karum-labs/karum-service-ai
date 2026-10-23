@@ -60,7 +60,10 @@ class RedactingFilter(logging.Filter):
                 record.__dict__[key] = "[REDACTED]"
         record.msg = sanitise_text(record.msg)
         if record.args:
-            record.args = tuple(sanitise_text(arg) for arg in record.args)
+            record.args = tuple(
+                sanitise_text(arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
         return True
 
 
