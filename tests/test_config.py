@@ -70,7 +70,7 @@ def test_the_defaults_need_no_environment(monkeypatch: pytest.MonkeyPatch) -> No
         if name.startswith("AI_") or name in {"PORT", "MODE", "LOG_LEVEL", "GEMINI_API_KEY"}:
             monkeypatch.delenv(name, raising=False)
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.port == 8082
     assert settings.grpc_port == 9092
