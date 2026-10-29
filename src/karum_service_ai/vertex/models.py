@@ -141,6 +141,17 @@ class Battlecard(_Base):
     compare_summary: str = ""
 
 
+class Citation(_Base):
+    """One machine-readable citation: an evidence id plus citation text.
+
+    Prose never carries ids inline; citations render as a separate source list
+    at the bottom of the pitch (PLAN.md §64).
+    """
+
+    evidence_id: str
+    text: str
+
+
 class BrandContext(_Base):
     """The brand side of a draft request."""
 
@@ -158,10 +169,24 @@ class DoorContext(_Base):
 
 
 class DraftDoorPitchResponse(_Base):
-    script: str
+    """One door's pitch: six citation-free sections plus a source list.
+
+    ``script`` is the combined, citation-free renderable prose kept for
+    backward compatibility; the six sections carry the human-readable text and
+    ``sources`` carries the machine-readable citations (PLAN.md §64).
+    """
+
+    script: str = ""
     battlecard: Battlecard | None = None
     recommended_sku: Sku
     mode_paragraph: str = ""
+    opening: str = ""
+    why_this_door: str = ""
+    pitch: str = ""
+    product_to_lead: str = ""
+    ask: str = ""
+    close: str = ""
+    sources: list[Citation] = Field(default_factory=list)
     attribution: ModelAttribution
     error_code: ErrorCode = ErrorCode.UNSPECIFIED
     error_message: str = ""

@@ -197,6 +197,9 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
             # An empty set is strict: every sentence that states a number is
             # dropped (PLAN.md §17, §18).
             evidence_ids=list(request.evidence_ids),
+            instructions=request.instructions or "",
+            attachment_id=request.attachment_id or "",
+            attachment_name=request.attachment_name or "",
         )
         card = None
         if result.battlecard is not None:

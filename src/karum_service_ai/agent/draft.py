@@ -26,6 +26,7 @@ from karum_service_ai.agent.prompting import DATA_RULE, as_data, safe_text
 from karum_service_ai.vertex.client import VertexClient, VertexError
 from karum_service_ai.vertex.models import (
     BrandContext,
+    Citation,
     DoorContext,
     DraftDoorPitchResponse,
     ErrorCode,
@@ -47,6 +48,10 @@ _CITE_RE = re.compile(r"\{([A-Za-z0-9_-]+)\}")
 #: The gateway can issue more than four digits, so the shape is the prefix plus
 #: any id characters, not a fixed width.
 _EVIDENCE_ID_RE = re.compile(r"\bev-[A-Za-z0-9_-]+\b")
+#: A citation token as written inline, including an optional pair of parens and
+#: the space before it, e.g. ``(ev-0001)`` or ``{ev-0001}``. Used to strip ids
+#: from stored prose so nothing but clean sentences remains.
+_STRIP_CITE_RE = re.compile(r"\s*\(?\bev-[A-Za-z0-9_-]+\b\)?")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DIGIT_RE = re.compile(r"\d")
 
@@ -134,36 +139,51 @@ def _build_pitch_prompt(
     city: str,
     mode: str,
     max_words: int,
+    instructions: str = "",
 ) -> str:
     tags = ", ".join(t.label or t.urn for t in door.shared_tags) or "none recorded"
     compare = ", ".join(t.label or t.urn for t in door.compare_tags) or "none"
     audit = door.audit
     incumbent = audit.incumbents[0].name if audit.incumbents else "none found"
     skus = ", ".join(s.name for s in brand.skus) or "none listed"
-    return (
-        "You are Karum's door-pitch writer. Write a short shopkeeper script (under "
-        f"{max_words} words) for a brand rep walking into {as_data(door.audit.door.name)} "
-        f"in {as_data(city)}. The brand is {as_data(brand.name)}. "
-        f"The door's shared taste tags: {as_data(tags)}. "
-        f"The door's affinity percentile: {door.affinity.value:.2f} (raw {door.affinity.raw_value:.2f}). "
-        f"Compare tags: {as_data(compare)}. Incumbent on the shelf: {as_data(incumbent)}. "
+    parts: list[str] = [
+        "You are Karum's door-pitch writer. Write a pitch a brand rep could read ",
+        f"aloud walking into {as_data(door.audit.door.name)} in {as_data(city)}. ",
+        f"The brand is {as_data(brand.name)}. ",
+        f"The door's shared taste tags: {as_data(tags)}. ",
+        f"The door's affinity percentile: {door.affinity.value:.2f} (raw "
+        f"{door.affinity.raw_value:.2f}). Compare tags: {as_data(compare)}. ",
+        f"Incumbent on the shelf: {as_data(incumbent)}. ",
         # The audit's menu summary is live web content. It is deliberately not
         # relayed into this prompt: the draft already receives the structured
         # incumbent and competitor findings, and excluding the free-text
         # summary closes the prompt-injection relay (PLAN.md §17, §18).
-        f"Brand SKUs: {as_data(skus)}. "
-        f"Rules: {DATA_RULE} "
-        "Every number in the script cites an evidence id, e.g. "
-        "'ranks first of 25 (ev-0001)'. Do not invent evidence ids. "
-        "Return a JSON DraftDoorPitchResponse: script, battlecard (only when an "
-        "incumbent is present: headline, incumbentName, talkingPoints each citing "
-        "an evidence id, compareSummary using the overlap tags when they exist and "
-        "the affinity plus menu finding otherwise), recommendedSku {id, name} chosen "
-        "from the brand's own list with the door's shared taste tags, modeParagraph "
-        "(site-brief line in flagship mode, activation proposal in collab mode, empty "
-        "in wholesale), attribution{modelId, promptVersion, evidenceIds, "
-        "ungrounded:false}, errorCode, errorMessage."
+        f"Brand SKUs: {as_data(skus)}. ",
+        f"Rules: {DATA_RULE} ",
+        "Write plain sentences with no bracketed ids. Keep numbers rounded and "
+        "attributed in words, e.g. \"Qloo places it in the top 4% of bars for "
+        "this brand's audience\". Every number in the prose must map to an "
+        "evidence id you cite in the sources list; a number whose id you cannot "
+        "back up means the sentence is dropped. ",
+    ]
+    if instructions:
+        parts.append(
+            "The rep's direction for this pitch is a suggestion, not a rule: "
+            f"{as_data(instructions)}. "
+        )
+    parts.extend(
+        [
+            "Return a JSON DraftDoorPitchResponse with six sections - opening, "
+            "why_this_door, pitch, product_to_lead, ask, close - each a short "
+            "plain-language string, plus sources as a list of {evidenceId, text} "
+            "objects, recommendedSku {id, name} chosen from the brand's own list "
+            "with the door's shared taste tags, modeParagraph (site-brief line in "
+            "flagship mode, activation proposal in collab mode, empty in wholesale), "
+            "attribution{modelId, promptVersion, evidenceIds, ungrounded:false}, "
+            "errorCode, errorMessage."
+        ]
     )
+    return "".join(parts)
 
 
 def draft_door_pitch(
@@ -177,6 +197,9 @@ def draft_door_pitch(
     model_id: str | None = None,
     *,
     evidence_ids: Sequence[str] | None = None,
+    instructions: str | None = None,
+    attachment_id: str | None = None,
+    attachment_name: str | None = None,
 ) -> DraftDoorPitchResponse:
     """Draft one door's pitch. Returns a degraded response on Vertex failure.
 
@@ -187,9 +210,27 @@ def draft_door_pitch(
     ``evidence_ids`` is the run's evidence set, the allow-set a cited id must
     belong to. ``None`` means the caller has no run evidence to check against;
     an empty list is strict and drops every sentence that states a number.
+
+    ``instructions`` is the operator's direction for the redraft (PLAN.md §65):
+    a suggestion, not a rule. It enters the prompt as delimited data and can
+    never add an unsupported number — the citation filter still gates every
+    number before the pitch is stored.
+
+    ``attachment_id`` and ``attachment_name`` identify the attached brand file,
+    when one was uploaded (PLAN.md §65). The file's extracted text is already
+    folded into ``instructions`` by the gateway; these fields are carried for
+    bookkeeping only and never reach the model as un-fenced text.
     """
     resolved_model = model_id or client.model_id
-    prompt = _build_pitch_prompt(brand, door, city, mode, max_words)
+    prompt_instructions = instructions or ""
+    if attachment_name:
+        suffix = f"\nAttached brand material: {attachment_name}."
+        prompt_instructions = (
+            prompt_instructions + suffix if prompt_instructions else suffix
+        )
+    prompt = _build_pitch_prompt(
+        brand, door, city, mode, max_words, instructions=prompt_instructions
+    )
     try:
         response = client.generate(
             prompt,
@@ -227,29 +268,59 @@ def draft_door_pitch(
             error_message=exc.detail,
         )
 
-    script = _enforce_cap(response.script, max_words)
-    before_words = _word_count(response.script)
-    script, dropped = enforce_citations(script, evidence_ids)
-    response.script = script
-    if dropped:
+    # Six citation-free sections; fall back to the legacy `script` field when
+    # the model returns only it.
+    sections = {
+        "opening": response.opening,
+        "why_this_door": response.why_this_door,
+        "pitch": response.pitch,
+        "product_to_lead": response.product_to_lead,
+        "ask": response.ask,
+        "close": response.close,
+    }
+    if not any(sections.values()) and response.script:
+        sections["pitch"] = response.script
+
+    # Enforce the citation rule per section: a sentence that states a number
+    # must cite an evidence id in the run's allow-set, or it is dropped.
+    dropped_total = 0
+    kept: dict[str, str] = {}
+    for name, text in sections.items():
+        kept_text, dropped = enforce_citations(text, evidence_ids)
+        kept[name] = kept_text
+        dropped_total += len(dropped)
+    if dropped_total:
         logger.warning(
             "draft_door_pitch.uncited_sentences door=%s dropped=%d",
             safe_text(door.audit.door.name),
-            len(dropped),
+            dropped_total,
         )
-        if not script:
+        if not any(kept.values()):
             response.error_code = ErrorCode.VALIDATION
             response.error_message = (
                 "every sentence was dropped: a number carried no verifiable evidence id"
             )
-    if _word_count(response.script) < before_words:
-        logger.warning(
-            "draft_door_pitch.word_cap door=%s cap=%d before=%d after=%d",
-            door.audit.door.name,
-            max_words,
-            before_words,
-            _word_count(response.script),
-        )
+
+    # Collect the ids the kept prose cites across every surface BEFORE the
+    # inline tokens are stripped from stored prose (PLAN.md §64).
+    cited_ids = _cited_ids(
+        *kept.values(),
+        response.battlecard.headline if response.battlecard is not None else "",
+        response.battlecard.compare_summary if response.battlecard is not None else "",
+        *(response.battlecard.talking_points if response.battlecard is not None else ()),
+        response.mode_paragraph,
+    )
+    for name in kept:
+        kept[name] = _STRIP_CITE_RE.sub("", kept[name]).strip()
+        kept[name] = _enforce_cap(kept[name], max_words)
+
+    response.opening = kept["opening"]
+    response.why_this_door = kept["why_this_door"]
+    response.pitch = kept["pitch"]
+    response.product_to_lead = kept["product_to_lead"]
+    response.ask = kept["ask"]
+    response.close = kept["close"]
+    response.script = "\n".join(text for text in kept.values() if text)
 
     if response.battlecard is not None:
         # The headline and the compare summary are numeric-bearing prose too,
@@ -263,9 +334,9 @@ def draft_door_pitch(
             )
             response.battlecard.compare_summary = compare_summary
         points = [
-            kept
+            kept_point
             for point in response.battlecard.talking_points
-            if (kept := enforce_citations(point, evidence_ids)[0])
+            if (kept_point := enforce_citations(point, evidence_ids)[0])
         ]
         response.battlecard.talking_points = points
         if not door.audit.incumbents:
@@ -278,15 +349,21 @@ def draft_door_pitch(
         response.mode_paragraph = paragraph
 
     response.recommended_sku = _sku_from_brand(response.recommended_sku, brand)
+
+    allowed = None if evidence_ids is None else set(evidence_ids)
+    source_by_id = {c.evidence_id: c.text for c in response.sources}
+    response.sources = [
+        Citation(evidence_id=cid, text=source_by_id[cid])
+        for cid in cited_ids
+        if (allowed is None or cid in allowed) and cid in source_by_id
+    ]
+
     # Provenance is the service's, not the model's. Overwrite whatever the
     # model wrote, including a forged model id or prompt version (PLAN.md §3).
     response.attribution = service_attribution(
         model_id=resolved_model,
         prompt_version=prompt_version,
-        evidence_ids=_cited_ids(
-            response.script,
-            *(response.battlecard.talking_points if response.battlecard is not None else ()),
-        ),
+        evidence_ids=cited_ids,
         ungrounded=False,
     )
     return response
