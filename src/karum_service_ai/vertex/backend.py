@@ -138,7 +138,12 @@ class LangChainBackend:
         if provider == "openai":
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(model=model, api_key=self._settings.openai_api_key, temperature=0)
+            return ChatOpenAI(
+                model=model,
+                api_key=self._settings.openai_api_key,
+                base_url=self._settings.openai_base_url or None,
+                temperature=0,
+            )
         if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
@@ -220,6 +225,118 @@ class LangChainBackend:
         return str(result)
 
 
+class OpenAIResponsesBackend:
+    """Direct OpenAI SDK backend using ``client.responses.create()``.
+
+    Used for OpenAI-compatible endpoints (Groq, Nebius, etc.) without LangChain.
+    Configured via ``AI_PROVIDER=openai-responses``, ``AI_OPENAI_API_KEY``,
+    ``AI_OPENAI_BASE_URL``, and ``AI_MODEL``.
+    """
+
+    _MODEL_DEFAULTS: dict[str, str] = {
+        "openai-responses": "gpt-4o-mini",
+    }
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._model_name = settings.model or self._MODEL_DEFAULTS.get("openai-responses", "")
+        if not self._model_name:
+            raise RuntimeError("no default model for openai-responses; set AI_MODEL")
+        try:
+            from openai import OpenAI
+
+            self._client = OpenAI(
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_base_url or None,
+            )
+        except ImportError as exc:  # pragma: no cover - import guard
+            raise RuntimeError("openai package not installed; run `uv add openai`") from exc
+        self._last_usage: dict[str, int] | None = None
+
+    @property
+    def model_id(self) -> str:
+        return self._model_name
+
+    @property
+    def last_usage(self) -> dict[str, int] | None:
+        return self._last_usage
+
+    def generate(
+        self,
+        prompt: str,
+        schema: type[BaseModel],
+        *,
+        grounded: bool = False,
+        timeout_ms: int = 30000,
+        max_tokens: int = 2048,
+        request_payload: Any = None,
+    ) -> str:
+        """Generate one structured response via the OpenAI Responses API.
+
+        Returns the raw output text; the caller (VertexClient) validates it
+        against ``schema`` with ``model_validate_json``.
+        """
+        if grounded:
+            logger.warning(
+                "openai.responses.grounding_unsupported provider=openai-responses; running ungrounded"
+            )
+
+        kwargs: dict[str, Any] = {
+            "model": self._model_name,
+            "input": prompt,
+        }
+        if max_tokens:
+            kwargs["max_output_tokens"] = max_tokens
+        if timeout_ms:
+            kwargs["timeout"] = timeout_ms / 1000.0
+
+        response = self._client.responses.create(**kwargs)
+        text = getattr(response, "output_text", "") or ""
+        # Strip markdown code fences the model often wraps JSON in
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            # Drop the opening fence (```json or ```)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            # Drop the closing fence if present
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        # Sanitize fields the service overwrites anyway (provenance is the
+        # service's, not the model's). errorCode must be a valid ErrorCode
+        # enum value; errorMessage defaults to empty.
+        try:
+            import json as _json
+
+            payload = _json.loads(text)
+            if isinstance(payload, dict):
+                ec = payload.get("errorCode", "")
+                valid_codes = {
+                    "ERROR_CODE_UNSPECIFIED",
+                    "ERROR_CODE_UNRESOLVED",
+                    "ERROR_CODE_EMPTY",
+                    "ERROR_CODE_RATE_LIMITED",
+                    "ERROR_CODE_UPSTREAM",
+                    "ERROR_CODE_VALIDATION",
+                }
+                if ec not in valid_codes:
+                    payload["errorCode"] = "ERROR_CODE_UNSPECIFIED"
+                payload.setdefault("errorMessage", "")
+                text = _json.dumps(payload)
+        except Exception:  # noqa: BLE001 - pass raw text if not JSON
+            pass
+
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self._last_usage = {}
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                if hasattr(usage, key):
+                    self._last_usage[key] = int(getattr(usage, key) or 0)
+
+        return text
+
+
 class FixtureBackend:
     def __init__(self, transport: Any) -> None:
         self._transport = transport
@@ -261,4 +378,6 @@ def build_backend(settings: Settings, model: Any | None = None) -> "ModelBackend
     provider = (settings.provider or "gemini").lower()
     if provider == "gemini":
         return GeminiBackend(settings)
+    if provider == "openai-responses":
+        return OpenAIResponsesBackend(settings)
     return LangChainBackend(settings)

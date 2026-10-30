@@ -178,7 +178,7 @@ class DraftDoorPitchResponse(_Base):
 
     script: str = ""
     battlecard: Battlecard | None = None
-    recommended_sku: Sku
+    recommended_sku: Sku = Field(default_factory=lambda: Sku(id="", name=""))
     mode_paragraph: str = ""
     opening: str = ""
     why_this_door: str = ""
@@ -187,7 +187,7 @@ class DraftDoorPitchResponse(_Base):
     ask: str = ""
     close: str = ""
     sources: list[Citation] = Field(default_factory=list)
-    attribution: ModelAttribution
+    attribution: ModelAttribution | None = None
     error_code: ErrorCode = ErrorCode.UNSPECIFIED
     error_message: str = ""
 

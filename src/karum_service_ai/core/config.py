@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     @field_validator("provider")
     @classmethod
     def _validate_provider(cls, value: str) -> str:
-        allowed = {"gemini", "google", "openai", "anthropic", "ollama"}
+        allowed = {"gemini", "google", "openai", "openai-responses", "anthropic", "ollama"}
         if value.lower() not in allowed:
             raise ValueError(f"AI_PROVIDER must be one of {sorted(allowed)}, got {value!r}")
         return value.lower()
@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     #: Base URL for an Ollama server. Used when ``provider == "ollama"``.
     ollama_base_url: str = ""
+    #: Base URL for an OpenAI-compatible endpoint (e.g. Nebius). Used when
+    #: ``provider == "openai"``. Leave empty for the official OpenAI API.
+    openai_base_url: str = ""
 
     # Gemini ----------------------------------------------------------------
     #: Gemini API key from Google AI Studio. When set, model calls use this
