@@ -258,6 +258,10 @@ class OpenAIResponsesBackend:
         return self._model_name
 
     @property
+    def grounded_model_id(self) -> str:
+        return self._settings.audit_model or self._model_name
+
+    @property
     def last_usage(self) -> dict[str, int] | None:
         return self._last_usage
 
@@ -276,21 +280,53 @@ class OpenAIResponsesBackend:
         Returns the raw output text; the caller (VertexClient) validates it
         against ``schema`` with ``model_validate_json``.
         """
-        if grounded:
-            logger.warning(
-                "openai.responses.grounding_unsupported provider=openai-responses; running ungrounded"
-            )
-
+        model = self.grounded_model_id if grounded else self._model_name
         kwargs: dict[str, Any] = {
-            "model": self._model_name,
+            "model": model,
             "input": prompt,
         }
         if max_tokens:
             kwargs["max_output_tokens"] = max_tokens
         if timeout_ms:
             kwargs["timeout"] = timeout_ms / 1000.0
+        if grounded and not self._settings.openai_base_url:
+            # The menu audit reads live menus: OpenAI's hosted web search is
+            # the grounding tool. OpenAI-compatible endpoints (Groq, Nebius)
+            # do not host it, so they stay ungrounded.
+            kwargs["tools"] = [{"type": "web_search"}]
+        elif grounded:
+            logger.warning(
+                "openai.responses.grounding_unsupported base_url=%s; running ungrounded",
+                self._settings.openai_base_url,
+            )
+        if model.startswith("gpt-5"):
+            # GPT-5 models reason before answering and count those tokens
+            # against max_output_tokens; minimal effort keeps the budget for
+            # the JSON itself. Web search needs at least low effort.
+            kwargs["reasoning"] = {"effort": "low" if "tools" in kwargs else "minimal"}
+        # Ask for the response shape instead of hoping the prompt gets it:
+        # without this the model guesses field names and fails validation.
+        # Not strict: the service's schemas have defaulted fields, which
+        # strict mode rejects.
+        kwargs["text"] = {
+            "format": {
+                "type": "json_schema",
+                "name": schema.__name__,
+                "schema": schema.model_json_schema(),
+                "strict": False,
+            }
+        }
 
-        response = self._client.responses.create(**kwargs)
+        try:
+            response = self._client.responses.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # An OpenAI-compatible endpoint (Groq, Nebius) may not accept a
+            # json_schema format; retry once with the prompt alone.
+            if type(exc).__name__ != "BadRequestError":
+                raise
+            logger.warning("openai.responses.json_schema_rejected error=%s", exc)
+            kwargs.pop("text")
+            response = self._client.responses.create(**kwargs)
         text = getattr(response, "output_text", "") or ""
         # Strip markdown code fences the model often wraps JSON in
         stripped = text.strip()
@@ -311,18 +347,11 @@ class OpenAIResponsesBackend:
 
             payload = _json.loads(text)
             if isinstance(payload, dict):
-                ec = payload.get("errorCode", "")
-                valid_codes = {
-                    "ERROR_CODE_UNSPECIFIED",
-                    "ERROR_CODE_UNRESOLVED",
-                    "ERROR_CODE_EMPTY",
-                    "ERROR_CODE_RATE_LIMITED",
-                    "ERROR_CODE_UPSTREAM",
-                    "ERROR_CODE_VALIDATION",
-                }
-                if ec not in valid_codes:
-                    payload["errorCode"] = "ERROR_CODE_UNSPECIFIED"
-                payload.setdefault("errorMessage", "")
+                # errorCode and errorMessage are the service's, never the
+                # model's: a model that reports "no menus found" as an error
+                # would fail the whole call. The agent sets them on failure.
+                payload["errorCode"] = "ERROR_CODE_UNSPECIFIED"
+                payload["errorMessage"] = ""
                 text = _json.dumps(payload)
         except Exception:  # noqa: BLE001 - pass raw text if not JSON
             pass

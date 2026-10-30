@@ -173,6 +173,10 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
         brand = BrandContext(
             name=request.brand.name,
             skus=[Sku(id=sku.id, name=sku.name) for sku in request.brand.skus],
+            category=request.brand.category,
+            description=request.brand.description,
+            positioning=request.brand.positioning,
+            audience=request.brand.audience,
         )
         audit = _audit_in(request.door.audit)
         door = DoorContext(
@@ -211,6 +215,16 @@ class AgentServicer(agent_pb2_grpc.AgentServiceServicer):
             )
         return agent_pb2.DraftDoorPitchResponse(
             script=result.script,
+            opening=result.opening,
+            why_this_door=result.why_this_door,
+            pitch=result.pitch,
+            product_to_lead=result.product_to_lead,
+            ask=result.ask,
+            close=result.close,
+            sources=[
+                agent_pb2.Citation(evidence_id=source.evidence_id, text=source.text)
+                for source in result.sources
+            ],
             battlecard=card,
             recommended_sku=agent_pb2.Sku(
                 id=result.recommended_sku.id, name=result.recommended_sku.name

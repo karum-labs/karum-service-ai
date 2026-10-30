@@ -73,6 +73,10 @@ class Settings(BaseSettings):
     #: Model id. Empty means "use the provider's default" (see
     #: ``vertex.backend.LangChainBackend._PROVIDER_DEFAULTS``).
     model: str = ""
+    #: Model id for grounded calls (the menu audit), which need a model
+    #: strong enough to search and read menus. Empty means ``model``.
+    #: Honoured by ``openai-responses``.
+    audit_model: str = ""
     #: Comma-separated fallback providers tried in order when the primary
     #: fails (LangChain ``with_fallbacks``). Empty disables fallbacks.
     fallback_providers: str = ""

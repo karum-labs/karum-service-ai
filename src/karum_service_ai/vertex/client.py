@@ -121,6 +121,15 @@ class VertexClient:
         return self._settings.gemini_model or self._settings.model
 
     @property
+    def grounded_model_id(self) -> str:
+        """Model id used for grounded calls; the default model unless the
+        backend routes them to a stronger one (``AI_AUDIT_MODEL``)."""
+        backend = self._backend
+        if backend is not None and hasattr(backend, "grounded_model_id"):
+            return backend.grounded_model_id
+        return self.model_id
+
+    @property
     def location(self) -> str:
         """Provider/region label for logging."""
         return self._settings.gcp_location or self._settings.provider
@@ -247,10 +256,11 @@ class VertexClient:
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(
-                    "vertex.generate.schema_invalid model=%s prompt_version=%s attempt=%d",
+                    "vertex.generate.schema_invalid model=%s prompt_version=%s attempt=%d errors=%s",
                     resolved_model,
                     prompt_version,
                     attempt,
+                    [f"{'.'.join(map(str, e['loc']))}:{e['type']}" for e in exc.errors()[:6]],
                 )
                 continue
 

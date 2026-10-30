@@ -157,6 +157,12 @@ class BrandContext(_Base):
 
     name: str
     skus: list[Sku] = Field(default_factory=list)
+    #: The account's brand profile: what the brand is and why a venue should
+    #: stock it. Empty when the account has none.
+    category: str = ""
+    description: str = ""
+    positioning: str = ""
+    audience: str = ""
 
 
 class DoorContext(_Base):

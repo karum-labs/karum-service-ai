@@ -314,7 +314,7 @@ def test_draft_succeeds_when_model_omits_service_owned_fields() -> None:
     # attribution is service-owned; the model's omission is filled by the service.
     assert response.attribution is not None
     assert response.attribution.model_id == "gemini-3.8-flash"
-    assert response.attribution.prompt_version == "draft-door-pitch@v1"
+    assert response.attribution.prompt_version == "draft-door-pitch@v2"
     assert response.error_code is ErrorCode.UNSPECIFIED
 
 
@@ -384,3 +384,32 @@ def test_draft_strips_ev_tokens_from_all_prose() -> None:
         response.script,
     ):
         assert "ev-" not in text
+
+
+def test_pitch_prompt_carries_the_brand_profile() -> None:
+    from karum_service_ai.agent.draft import _build_pitch_prompt
+    from karum_service_ai.vertex.models import (
+        BrandContext,
+        DoorContext,
+        EntityRef,
+        MenuAuditResult,
+        SubScore,
+    )
+
+    brand = BrandContext(
+        name="Bloom Soda Co.",
+        category="Craft soft drinks",
+        positioning="A grown-up non-alcoholic option",
+    )
+    door = DoorContext(
+        affinity=SubScore(name="cultural_affinity", value=0.9, raw_value=0.9),
+        audit=MenuAuditResult(
+            door=EntityRef(id="d-1", type="urn:entity:place", name="Whisler's", city="Austin"),
+            succeeded=False,
+            shelf_unknown=True,
+        ),
+    )
+    prompt = _build_pitch_prompt(brand, door, "Austin", "wholesale", 220)
+    assert "Craft soft drinks" in prompt
+    assert "A grown-up non-alcoholic option" in prompt
+    assert "do not describe it back" in prompt

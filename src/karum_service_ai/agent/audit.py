@@ -167,7 +167,7 @@ def audit_menu(
     ``shelf_unknown=True``, so the composite renormalises instead of losing the
     board (PLAN.md §16).
     """
-    resolved_model = model_id or client.model_id
+    resolved_model = model_id or getattr(client, "grounded_model_id", client.model_id)
     attribution = service_attribution(
         model_id=resolved_model,
         prompt_version=prompt_version,

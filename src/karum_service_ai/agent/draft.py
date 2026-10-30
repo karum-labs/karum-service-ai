@@ -37,7 +37,7 @@ from karum_service_ai.vertex.models import (
 
 logger = logging.getLogger(__name__)
 
-DRAFT_PROMPT_VERSION = "draft-door-pitch@v1"
+DRAFT_PROMPT_VERSION = "draft-door-pitch@v2"
 BASELINE_PROMPT_VERSION = "llm-only-baseline@v1"
 
 #: Evidence-citation placeholder, e.g. ``{ev-0001}``. A sentence whose cited id
@@ -146,26 +146,47 @@ def _build_pitch_prompt(
     audit = door.audit
     incumbent = audit.incumbents[0].name if audit.incumbents else "none found"
     skus = ", ".join(s.name for s in brand.skus) or "none listed"
+    venue = as_data(door.audit.door.name)
     parts: list[str] = [
-        "You are Karum's door-pitch writer. Write a pitch a brand rep could read ",
-        f"aloud walking into {as_data(door.audit.door.name)} in {as_data(city)}. ",
-        f"The brand is {as_data(brand.name)}. ",
-        f"The door's shared taste tags: {as_data(tags)}. ",
-        f"The door's affinity percentile: {door.affinity.value:.2f} (raw "
-        f"{door.affinity.raw_value:.2f}). Compare tags: {as_data(compare)}. ",
-        f"Incumbent on the shelf: {as_data(incumbent)}. ",
-        # The audit's menu summary is live web content. It is deliberately not
-        # relayed into this prompt: the draft already receives the structured
-        # incumbent and competitor findings, and excluding the free-text
-        # summary closes the prompt-injection relay (PLAN.md §17, §18).
-        f"Brand SKUs: {as_data(skus)}. ",
-        f"Rules: {DATA_RULE} ",
-        "Write plain sentences with no bracketed ids. Keep numbers rounded and "
-        "attributed in words, e.g. \"Qloo places it in the top 4% of bars for "
-        "this brand's audience\". Every number in the prose must map to an "
-        "evidence id you cite in the sources list; a number whose id you cannot "
-        "back up means the sentence is dropped. ",
+        "You are a sales rep for the brand below, writing the pitch you will say "
+        f"to the owner or buyer of {venue} in {as_data(city)} to get the brand "
+        "stocked there. The listener knows their own venue, so do not describe it "
+        "back to them. Every section argues one thing: why this brand belongs in "
+        "this venue, and what the venue gains from carrying it (new guests, a "
+        "higher-margin drink, a gap on the menu, a better fit for its crowd). ",
+        f"The brand: {as_data(brand.name)}. ",
     ]
+    if brand.category:
+        parts.append(f"What the brand is: {as_data(brand.category)}. ")
+    if brand.description:
+        parts.append(f"About the brand: {as_data(brand.description)}. ")
+    if brand.positioning:
+        parts.append(f"Why it wins: {as_data(brand.positioning)}. ")
+    if brand.audience:
+        parts.append(f"Who buys it: {as_data(brand.audience)}. ")
+    parts.extend(
+        [
+            f"Brand products: {as_data(skus)}. ",
+            f"Why Karum picked this venue - the taste signals its guests share with "
+            f"the brand's audience: {as_data(tags)}. "
+            f"Audience overlap tags: {as_data(compare)}. "
+            f"Affinity percentile: {door.affinity.value:.2f}. ",
+            f"Competitor already on their menu: {as_data(incumbent)}. ",
+            # The audit's menu summary is live web content. It is deliberately not
+            # relayed into this prompt: the draft already receives the structured
+            # incumbent and competitor findings, and excluding the free-text
+            # summary closes the prompt-injection relay (PLAN.md §17, §18).
+            f"Rules: {DATA_RULE} ",
+            "Mention the venue only to connect it to the brand; at most one clause "
+            "about the venue per section. Use the taste signals as evidence of fit "
+            "(\"your guests already lean towards X, which is exactly who buys us\"), "
+            "not as a description. If a competitor is named, say why the brand is a "
+            "better or complementary choice. Speak as \"we\" for the brand and "
+            "\"you\" for the venue. Write plain, confident spoken sentences with no "
+            "bracketed ids and no marketing fluff. Avoid numbers; a number must map to "
+            "an evidence id you cite in the sources list or the sentence is dropped. ",
+        ]
+    )
     if instructions:
         parts.append(
             "The rep's direction for this pitch is a suggestion, not a rule: "
@@ -173,11 +194,15 @@ def _build_pitch_prompt(
         )
     parts.extend(
         [
-            "Return a JSON DraftDoorPitchResponse with six sections - opening, "
-            "why_this_door, pitch, product_to_lead, ask, close - each a short "
-            "plain-language string, plus sources as a list of {evidenceId, text} "
-            "objects, recommendedSku {id, name} chosen from the brand's own list "
-            "with the door's shared taste tags, modeParagraph (site-brief line in "
+            f"Keep the whole pitch under {max_words} words. ",
+            "Return a JSON DraftDoorPitchResponse with six sections, each one to "
+            "three sentences: opening (who we are and why we came to this venue), "
+            "why_this_door (why this venue's guests fit the brand), pitch (what the "
+            "brand does for the venue), product_to_lead (the one product to start "
+            "with and why it suits this venue), ask (a concrete, low-risk first "
+            "order or trial), close (a short next step). Also return sources as a "
+            "list of {evidenceId, text} objects, recommendedSku {id, name} chosen "
+            "from the brand's own products, modeParagraph (site-brief line in "
             "flagship mode, activation proposal in collab mode, empty in wholesale), "
             "attribution{modelId, promptVersion, evidenceIds, ungrounded:false}, "
             "errorCode, errorMessage."

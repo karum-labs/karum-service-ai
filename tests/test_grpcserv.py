@@ -96,7 +96,7 @@ class _FakeVertex:
             recommended_sku=Sku(id="sk-ilegal", name="Ilegal Mezcal Espadin Joven"),
             mode_paragraph="",
             attribution=ModelAttribution(
-                model_id="fake", prompt_version="draft-door-pitch@v1", ungrounded=False
+                model_id="fake", prompt_version="draft-door-pitch@v2", ungrounded=False
             ),
             error_code=ErrorCode.UNSPECIFIED,
         )
@@ -161,7 +161,7 @@ def test_draft_rpc_keeps_a_cited_id_inside_the_run_evidence_set():
     assert "ev-" not in response.script
     assert list(response.attribution.evidence_ids) == ["ev-0001"]
     assert response.attribution.model_id == "fake"
-    assert response.attribution.prompt_version == "draft-door-pitch@v1"
+    assert response.attribution.prompt_version == "draft-door-pitch@v2"
 
 
 def test_draft_rpc_drops_a_cited_id_outside_the_run_evidence_set():
