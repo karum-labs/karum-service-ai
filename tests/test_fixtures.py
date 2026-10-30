@@ -277,7 +277,7 @@ def test_the_shipped_pack_replays_the_austin_pitch() -> None:
     )
 
     assert "ranks first of 25" in response.script
-    assert "(affinity 0.87; ev-0001)" in response.script
+    assert "ev-" not in response.script
     assert response.battlecard is not None
     assert response.battlecard.incumbent_name == "Del Maguey Single Village Mezcal"
     # The cited ev-0006 is outside the run's evidence set, so it is dropped

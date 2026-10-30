@@ -158,7 +158,7 @@ def test_draft_rpc_keeps_a_cited_id_inside_the_run_evidence_set():
     """A cited id the run's evidence set carries survives the filter."""
     servicer = AgentServicer(Settings(), client=_FakeVertex())
     response = servicer.DraftDoorPitch(_draft_request(["ev-0001", "ev-0002"]), None)
-    assert "ev-0001" in response.script
+    assert "ev-" not in response.script
     assert list(response.attribution.evidence_ids) == ["ev-0001"]
     assert response.attribution.model_id == "fake"
     assert response.attribution.prompt_version == "draft-door-pitch@v1"

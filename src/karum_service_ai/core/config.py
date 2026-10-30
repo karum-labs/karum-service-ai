@@ -40,6 +40,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="AI_",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # Service identity -----------------------------------------------------
@@ -63,6 +64,28 @@ class Settings(BaseSettings):
     #: Relative paths resolve against this repository's root; the pack ships
     #: in karum-infra under ``fixtures/ai`` (mirrors ``TASTE_FIXTURES_DIR``).
     ai_fixtures_dir: Path = Path("../karum-infra/fixtures/ai")
+
+    # Provider selection ----------------------------------------------------
+    #: Which LLM provider to use: ``gemini`` (default), ``openai``,
+    #: ``anthropic``, or ``ollama``. Switching providers is a one-env-var
+    #: change; no code edit required (PLAN.md §71).
+    provider: str = "gemini"
+    #: Model id. Empty means "use the provider's default" (see
+    #: ``vertex.backend.LangChainBackend._PROVIDER_DEFAULTS``).
+    model: str = ""
+    #: Comma-separated fallback providers tried in order when the primary
+    #: fails (LangChain ``with_fallbacks``). Empty disables fallbacks.
+    fallback_providers: str = ""
+    #: Opt-in LangSmith tracing. Off by default so prompts never leave the box.
+    langchain_tracing: bool = False
+
+    # Provider credentials --------------------------------------------------
+    #: OpenAI API key. Used when ``provider == "openai"``.
+    openai_api_key: str = ""
+    #: Anthropic API key. Used when ``provider == "anthropic"``.
+    anthropic_api_key: str = ""
+    #: Base URL for an Ollama server. Used when ``provider == "ollama"``.
+    ollama_base_url: str = ""
 
     # Gemini ----------------------------------------------------------------
     #: Gemini API key from Google AI Studio. When set, model calls use this

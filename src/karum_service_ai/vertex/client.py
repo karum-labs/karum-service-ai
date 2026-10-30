@@ -24,7 +24,6 @@ from typing import Any, TypeVar
 
 from google import genai
 from google.genai import errors as genai_errors
-from google.genai import types as genai_types
 from pydantic import BaseModel, ValidationError
 
 from karum_service_ai.core.config import Mode, Settings
@@ -78,49 +77,46 @@ class VertexClient:
     process (PLAN.md §4).
     """
 
-    def __init__(self, settings: Settings, model: Any | None = None) -> None:
+    def __init__(self, settings: Settings, model: Any | None = None, backend: Any | None = None) -> None:
         self._settings = settings
         self._client: Any | None = None
         self._model: Any | None = model
         self._transport: RecordedModelTransport | None = None
+        self._backend: Any | None = backend
         # A failed build is kept, not raised: the model client and the fixture
         # pack are resolved here, but a missing credential or pack must not
         # escape the servicer as a gRPC UNKNOWN. generate() re-raises the typed
         # VertexError, which the agent functions catch and map onto
         # ERROR_CODE_UPSTREAM (PLAN.md §15, §18, §4).
         self._build_error: VertexError | None = None
-        if self._model is None:
+        if self._backend is None:
             try:
-                self._resolve_transport()
-            except VertexError as exc:
-                logger.warning("vertex.transport_unavailable detail=%s", exc.detail)
-                self._build_error = exc
+                from karum_service_ai.vertex.backend import build_backend
 
-    def _resolve_transport(self) -> None:
-        """Build the fixture pack or the live model exactly once."""
-        if self._settings.mode == Mode.FIXTURE:
-            self._transport = RecordedModelTransport(
-                FixturePack(resolve_fixtures_dir(self._settings.ai_fixtures_dir))
-            )
-        else:
-            self._model = self._build_model()
+                self._backend = build_backend(settings, model=model)
+            except Exception as exc:  # noqa: BLE001 - typed below
+                logger.warning("vertex.transport_unavailable detail=%s", exc)
+                self._build_error = VertexError(str(exc))
 
     @property
     def transport_name(self) -> str:
         """The transport this client speaks through: ``fixture`` or ``live``."""
-        if self._model is None and self._settings.mode == Mode.FIXTURE:
+        if self._settings.mode == Mode.FIXTURE:
             return "fixture"
         return "live"
 
     @property
     def model_id(self) -> str:
-        """Gemini model id, resolved from settings."""
-        return self._settings.gemini_model
+        """Resolved model id (provider default or explicit)."""
+        backend = self._backend
+        if backend is not None and hasattr(backend, "model_id"):
+            return backend.model_id
+        return self._settings.gemini_model or self._settings.model
 
     @property
     def location(self) -> str:
-        """GCP region, resolved from settings."""
-        return self._settings.gcp_location
+        """Provider/region label for logging."""
+        return self._settings.gcp_location or self._settings.provider
 
     @property
     def timeout_ms(self) -> int:
@@ -192,28 +188,25 @@ class VertexClient:
         if self._build_error is not None:
             raise self._build_error
 
-        if self._transport is not None:
-            return self._transport.generate(schema, request_payload)
-
-        tools = [genai_types.Tool(google_search=genai_types.GoogleSearch())] if grounded else None
+        backend = self._backend
         last_error: ValidationError | None = None
         for attempt in range(1, self._settings.schema_retry_limit + 2):
             try:
-                response = self._model.generate_content(
-                    model=resolved_model,
-                    contents=prompt,
-                    config=genai_types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=schema,
-                        max_output_tokens=self._settings.max_output_tokens,
-                        http_options=genai_types.HttpOptions(timeout=self.timeout_ms),
-                        tools=tools,
-                    ),
+                text = backend.generate(
+                    prompt,
+                    schema,
+                    grounded=grounded,
+                    timeout_ms=self.timeout_ms,
+                    max_tokens=self._settings.max_output_tokens,
+                    request_payload=request_payload,
                 )
             except Exception as exc:  # transport / auth failure; no retry
-                # The raw exception (for an APIError, the upstream response
-                # body) is logged here and preserved on the cause chain; the
-                # typed detail the agents forward is sanitized (S-11).
+                # Fixture misses are typed errors the agent layer expects to
+                # receive untranslated (PLAN.md §4, §18).
+                from karum_service_ai.vertex.errors import FixtureError
+
+                if isinstance(exc, FixtureError):
+                    raise
                 logger.warning(
                     "vertex.generate.transport_failed model=%s prompt_version=%s error=%s",
                     resolved_model,
@@ -227,7 +220,6 @@ class VertexClient:
                     cause=exc,
                 ) from exc
 
-            text = getattr(response, "text", "") or ""
             try:
                 return schema.model_validate_json(text)
             except ValidationError as exc:
