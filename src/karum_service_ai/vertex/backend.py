@@ -1,19 +1,11 @@
-"""Model backends for service-ai (PLAN.md §71).
-
-A backend is the one thing that actually talks to an LLM. ``VertexClient``
-owns retries, timeouts, fixture replay, and schema validation; it delegates
-the raw call to a backend. Swapping providers is therefore a matter of
-building a different backend from ``Settings`` — the agents and the gRPC
-servicer never change.
-
-Backends return the model's raw JSON text; parsing and Pydantic validation
-stay in ``VertexClient`` so every backend is held to the same contract.
-"""
+"""Model backends for service-ai (PLAN.md §71)."""
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Protocol, runtime_checkable
 
+import httpx
 from pydantic import BaseModel
 
 from karum_service_ai.core.config import Settings
@@ -23,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class ModelBackend(Protocol):
-    """The minimal surface a model provider must implement."""
-
     @property
     def model_id(self) -> str: ...
 
@@ -36,12 +26,11 @@ class ModelBackend(Protocol):
         grounded: bool = False,
         timeout_ms: int = 30000,
         max_tokens: int = 2048,
+        request_payload: Any = None,
     ) -> str: ...
 
 
 class GeminiBackend:
-    """The original google-genai path, including Google Search grounding."""
-
     def __init__(self, settings: Settings, model: Any | None = None) -> None:
         self._settings = settings
         self._model = model
@@ -68,6 +57,10 @@ class GeminiBackend:
     @property
     def model_id(self) -> str:
         return self._settings.gemini_model
+
+    @property
+    def last_usage(self) -> None:
+        return None
 
     def generate(
         self,
@@ -100,8 +93,6 @@ class GeminiBackend:
 
 
 class LangChainBackend:
-    """A provider-agnostic backend built on LangChain chat models."""
-
     _PROVIDER_DEFAULTS: dict[str, str] = {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-5-haiku-latest",
@@ -117,8 +108,6 @@ class LangChainBackend:
         if not self._model_name:
             raise RuntimeError(f"no default model for provider {self._provider!r}; set AI_MODEL")
         if settings.langchain_tracing:
-            import os
-
             os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         self._chat = self._build_chat()
         self._last_usage = None
@@ -135,7 +124,7 @@ class LangChainBackend:
                 continue
             try:
                 fallbacks.append(self._build_one(name, model))
-            except Exception:  # noqa: BLE001 - optional fallback
+            except Exception:  # noqa: BLE001
                 logger.warning("langchain.fallback_unavailable provider=%s", name)
         if fallbacks:
             return primary.with_fallbacks(fallbacks)
@@ -178,11 +167,33 @@ class LangChainBackend:
         max_tokens: int = 2048,
         request_payload: Any = None,
     ) -> str:
+        grounding_context = ""
         if grounded:
-            logger.warning(
-                "langchain.generate.grounding_unsupported provider=%s; running ungrounded",
-                self._provider,
-            )
+            urls = []
+            try:
+                for t in (request_payload or {}).get("targets", []) or []:
+                    w = t.get("website") or (t.get("door") or {}).get("website") or ""
+                    if w:
+                        urls.append(w)
+            except Exception:  # noqa: BLE001
+                urls = []
+            fetched = []
+            for url in urls[:3]:
+                try:
+                    r = httpx.get(url, timeout=10.0, follow_redirects=True)
+                    if r.status_code == 200:
+                        fetched.append("--- %s ---\n%s" % (url, r.text[:4000]))
+                except Exception:  # noqa: BLE001
+                    logger.warning("langchain.grounding.fetch_failed url=%s", url)
+            if fetched:
+                grounding_context = "\n\nGrounding (fetched):\n" + "\n".join(fetched)
+            else:
+                logger.warning(
+                    "langchain.generate.grounding_unsupported provider=%s; running ungrounded",
+                    self._provider,
+                )
+        if grounding_context:
+            prompt = prompt + grounding_context
         try:
             from langchain_core.callbacks import UsageMetadataCallbackHandler
 
@@ -198,10 +209,10 @@ class LangChainBackend:
             try:
                 usage = getattr(handler, "usage_metadata", None)
                 if usage:
-                    self._last_usage = {
-                        k: (v.get("total_tokens", 0) if isinstance(v, dict) else 0)
-                        for k, v in usage.items()
-                    }
+                    self._last_usage = {}
+                    for k, v in usage.items():
+                        if isinstance(v, dict):
+                            self._last_usage[k] = v.get("total_tokens", 0)
             except Exception:  # noqa: BLE001
                 self._last_usage = None
         if isinstance(result, BaseModel):
@@ -210,8 +221,6 @@ class LangChainBackend:
 
 
 class FixtureBackend:
-    """Replays the recorded pack; implements the same protocol."""
-
     def __init__(self, transport: Any) -> None:
         self._transport = transport
         self._model_id = "fixture"
@@ -219,6 +228,10 @@ class FixtureBackend:
     @property
     def model_id(self) -> str:
         return self._model_id
+
+    @property
+    def last_usage(self) -> None:
+        return None
 
     def generate(
         self,
@@ -236,24 +249,15 @@ class FixtureBackend:
         return str(obj)
 
 
-def build_backend(settings: Settings, model: Any | None = None) -> ModelBackend:
-    """Construct the right backend for ``settings``.
-
-    ``model`` is an injection seam for tests (a fake google-genai model).
-    """
-    # Test injection: a fake google-genai model forces the live Gemini path
-    # regardless of mode, preserving the historical make_client contract.
+def build_backend(settings: Settings, model: Any | None = None) -> "ModelBackend":
     if model is not None:
         return GeminiBackend(settings, model=model)
-
     if settings.mode.value == "fixture":
-        # Imported lazily to avoid a circular import.
         from karum_service_ai.vertex.fixtures import FixturePack, resolve_fixtures_dir
         from karum_service_ai.vertex.transport import RecordedModelTransport
 
         pack = FixturePack(resolve_fixtures_dir(settings.ai_fixtures_dir))
         return FixtureBackend(RecordedModelTransport(pack))
-
     provider = (settings.provider or "gemini").lower()
     if provider == "gemini":
         return GeminiBackend(settings)

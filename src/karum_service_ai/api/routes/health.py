@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from karum_service_ai.core.config import Mode, Settings
+from karum_service_ai.vertex.client import usage_totals
 from karum_service_ai.vertex.fixtures import MANIFEST_NAME, resolve_fixtures_dir
 
 router = APIRouter()
@@ -52,4 +53,5 @@ def health(request: Request) -> dict[str, Any]:
         "mode": settings.mode.value,
         "uptime_seconds": int(monotonic() - _STARTED),
         "time": datetime.now(UTC).isoformat(),
+        "usage": usage_totals(),
     }

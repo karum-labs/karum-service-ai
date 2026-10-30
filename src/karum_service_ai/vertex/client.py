@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+#: Process-wide usage totals, surfaced on /health (PLAN.md §71-72).
+_USAGE_TOTALS: dict[str, int] = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0}
+
+
+def usage_totals() -> dict[str, int]:
+    return dict(_USAGE_TOTALS)
+
 __all__ = ["VertexClient", "VertexError"]
 
 #: The prompt is sent to the model as delimited data; venue and brand names are
@@ -232,6 +239,10 @@ class VertexClient:
                 usage = self.last_usage
                 if usage:
                     logger.info('vertex.generate.usage model=%s usage=%s', resolved_model, usage)
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        if key in usage:
+                            _USAGE_TOTALS[key] = _USAGE_TOTALS.get(key, 0) + int(usage[key])
+                    _USAGE_TOTALS["calls"] = _USAGE_TOTALS.get("calls", 0) + 1
                 return result
             except ValidationError as exc:
                 last_error = exc
