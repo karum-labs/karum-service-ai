@@ -124,3 +124,30 @@ Karum is a two-person build (record: [`DECISIONS.md`](https://github.com/karum-l
 ## Licence
 
 MIT. See [`LICENSE`](LICENSE).
+
+## Provider switching (Epic 71)
+
+`service-ai` defaults to Gemini. To use another provider, set:
+
+```
+AI_PROVIDER=openai          # gemini | openai | anthropic | ollama
+AI_MODEL=gpt-4o-mini        # empty = provider default
+AI_OPENAI_API_KEY=sk-...
+```
+
+Optional fallbacks (tried in order on failure):
+
+```
+AI_FALLBACK_PROVIDERS=anthropic
+AI_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Opt-in LangSmith tracing:
+
+```
+AI_LANGCHAIN_TRACING=true
+```
+
+Note: Google Search grounding is Gemini-only. On other providers the menu
+audit fetches the venue website directly and runs ungrounded otherwise; the
+response is still schema-validated and cited.
