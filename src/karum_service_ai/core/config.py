@@ -16,7 +16,7 @@ from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     fallback_providers: str = ""
     #: Opt-in LangSmith tracing. Off by default so prompts never leave the box.
     langchain_tracing: bool = False
+
+    @field_validator("provider")
+    @classmethod
+    def _validate_provider(cls, value: str) -> str:
+        allowed = {"gemini", "google", "openai", "anthropic", "ollama"}
+        if value.lower() not in allowed:
+            raise ValueError(f"AI_PROVIDER must be one of {sorted(allowed)}, got {value!r}")
+        return value.lower()
 
     # Provider credentials --------------------------------------------------
     #: OpenAI API key. Used when ``provider == "openai"``.

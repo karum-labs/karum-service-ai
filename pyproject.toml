@@ -15,6 +15,12 @@ dependencies = [
     "grpcio>=1.84.0",
     "grpcio-tools>=1.84.0",
     "httpx>=0.28.1",
+    "langchain>=1.2.0",
+    "langchain-core>=1.5.0",
+    "langchain-google-genai>=2.1.0",
+    "langchain-openai>=1.7.0",
+    "langchain-anthropic>=1.7.0",
+    "langchain-ollama>=1.0.0",
     # Pinned to the generator in karum-infra/proto/buf.gen.yaml
     # (protocolbuffers/python:v36.2). The generated modules carry
     # "Protobuf Python Version: 7.36.2" and validate the runtime on import,

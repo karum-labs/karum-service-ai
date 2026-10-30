@@ -128,6 +128,13 @@ class VertexClient:
         """Maximum targets the menu audit may send to Search grounding."""
         return self._settings.grounding_shortlist_cap
 
+    @property
+    def last_usage(self) -> dict[str, int] | None:
+        backend = self._backend
+        if backend is not None and hasattr(backend, "last_usage"):
+            return backend.last_usage
+        return None
+
     def _build_model(self) -> Any:
         # A Studio key is not a Cloud project credential. When it is set, the
         # call does not use Vertex or AI_GCP_PROJECT_ID.
@@ -221,7 +228,11 @@ class VertexClient:
                 ) from exc
 
             try:
-                return schema.model_validate_json(text)
+                result = schema.model_validate_json(text)
+                usage = self.last_usage
+                if usage:
+                    logger.info('vertex.generate.usage model=%s usage=%s', resolved_model, usage)
+                return result
             except ValidationError as exc:
                 last_error = exc
                 logger.warning(

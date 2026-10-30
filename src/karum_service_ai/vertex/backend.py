@@ -116,34 +116,57 @@ class LangChainBackend:
         self._model_name = settings.model or self._PROVIDER_DEFAULTS.get(self._provider, "")
         if not self._model_name:
             raise RuntimeError(f"no default model for provider {self._provider!r}; set AI_MODEL")
+        if settings.langchain_tracing:
+            import os
+
+            os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
         self._chat = self._build_chat()
+        self._last_usage = None
 
     def _build_chat(self) -> Any:
-        if self._provider in ("google", "gemini"):
+        primary = self._build_one(self._provider, self._model_name)
+        fallbacks = []
+        for name in (self._settings.fallback_providers or "").split(","):
+            name = name.strip().lower()
+            if not name or name == self._provider:
+                continue
+            model = self._PROVIDER_DEFAULTS.get(name)
+            if not model:
+                continue
+            try:
+                fallbacks.append(self._build_one(name, model))
+            except Exception:  # noqa: BLE001 - optional fallback
+                logger.warning("langchain.fallback_unavailable provider=%s", name)
+        if fallbacks:
+            return primary.with_fallbacks(fallbacks)
+        return primary
+
+    def _build_one(self, provider: str, model: str) -> Any:
+        if provider in ("google", "gemini"):
             from langchain_google_genai import ChatGoogleGenerativeAI
 
-            return ChatGoogleGenerativeAI(
-                model=self._model_name,
-                google_api_key=self._settings.gemini_api_key or None,
-                temperature=0,
-            )
-        if self._provider == "openai":
+            return ChatGoogleGenerativeAI(model=model, google_api_key=self._settings.gemini_api_key or None, temperature=0)
+        if provider == "openai":
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(model=self._model_name, api_key=self._settings.openai_api_key, temperature=0)
-        if self._provider == "anthropic":
+            return ChatOpenAI(model=model, api_key=self._settings.openai_api_key, temperature=0)
+        if provider == "anthropic":
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(model=self._model_name, api_key=self._settings.anthropic_api_key, temperature=0)
-        if self._provider == "ollama":
+            return ChatAnthropic(model=model, api_key=self._settings.anthropic_api_key, temperature=0)
+        if provider == "ollama":
             from langchain_ollama import ChatOllama
 
-            return ChatOllama(model=self._model_name, base_url=self._settings.ollama_base_url or None)
-        raise RuntimeError(f"unknown provider {self._provider!r}")
+            return ChatOllama(model=model, base_url=self._settings.ollama_base_url or None)
+        raise RuntimeError(f"unknown provider {provider!r}")
 
     @property
     def model_id(self) -> str:
         return self._model_name
+
+    @property
+    def last_usage(self) -> dict[str, int] | None:
+        return getattr(self, "_last_usage", None)
 
     def generate(
         self,
@@ -160,8 +183,27 @@ class LangChainBackend:
                 "langchain.generate.grounding_unsupported provider=%s; running ungrounded",
                 self._provider,
             )
+        try:
+            from langchain_core.callbacks import UsageMetadataCallbackHandler
+
+            handler = UsageMetadataCallbackHandler()
+            callbacks = [handler]
+        except Exception:  # noqa: BLE001
+            handler = None
+            callbacks = None
         chain = self._chat.with_structured_output(schema)
-        result = chain.invoke(prompt)
+        config = {"callbacks": callbacks} if callbacks else None
+        result = chain.invoke(prompt, config=config) if config else chain.invoke(prompt)
+        if handler is not None:
+            try:
+                usage = getattr(handler, "usage_metadata", None)
+                if usage:
+                    self._last_usage = {
+                        k: (v.get("total_tokens", 0) if isinstance(v, dict) else 0)
+                        for k, v in usage.items()
+                    }
+            except Exception:  # noqa: BLE001
+                self._last_usage = None
         if isinstance(result, BaseModel):
             return result.model_dump_json()
         return str(result)
